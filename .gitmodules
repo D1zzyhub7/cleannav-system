@@ -1,0 +1,9 @@
+[submodule "src/cleannav-interfaces"]
+	path = src/cleannav-interfaces
+	url = git@github.com:D1zzyhub7/cleannav-interfaces.git
+[submodule "src/cleannav-navigation"]
+	path = src/cleannav-navigation
+	url = git@github.com:D1zzyhub7/cleannav-navigation.git
+[submodule "src/cleannav-mission-manager"]
+	path = src/cleannav-mission-manager
+	url = git@github.com:D1zzyhub7/cleannav-mission-manager.git

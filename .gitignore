@@ -1,0 +1,35 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+
+# Secrets and local credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python cache
+*.py[cod]
+__pycache__/
+.pytest_cache/
+
+# Runtime artifacts
+*.bag
+*.db
+*.db3
+*.sqlite
+*.sqlite3
+rosbag2_*/
+
+# .gitmodules, src/, docs/, README.md, LICENSE, CONTRIBUTING.md,
+# and source/config files are intentionally not ignored.
