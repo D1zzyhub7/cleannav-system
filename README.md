@@ -45,7 +45,26 @@ source /opt/ros/humble/setup.bash
 colcon build
 ```
 
-当前尚未执行 G10 full-system build/runtime 验证。能 clone 并 pin 正确，与完整系统集成 build/runtime 已验证，是不同 Gate。
+## Integration validation
+
+- Git / submodule reproducibility：`PASS`
+- Fresh clone 方法：
+
+  ```bash
+  git clone --recurse-submodules \
+    git@github.com:D1zzyhub7/cleannav-system.git
+  ```
+
+- Fresh clone 验证：`PASS`
+- Fresh ROS 2 Humble workspace package discovery：`8 packages`
+- System-level `colcon build`：`PASS`
+- 构建结果：`8 packages finished`、`0 build failures`
+- System-level `colcon test`：`PASS`
+- 测试结果：`374 tests`、`0 errors`、`0 failures`、`1 skipped`
+
+这证明当前 pinned component set 可以从 GitHub 精确恢复，可以在 ROS 2 Humble workspace 中联合 build，并可以联合 test。`skipped` 是测试结果的一部分，不是 failure。
+
+`full-system runtime integration` 尚未在 `cleannav-system` 层完成验证。上述结果不等同于 Mission Manager、Navigation、Safety、HMI、Perception 已完成真实全系统闭环；当前 system repo 也尚未纳入 `cleannav-perception` 或 `cleannav-hmi`。
 
 ## 当前组件状态
 
