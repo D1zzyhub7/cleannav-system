@@ -1,8 +1,8 @@
 # CleanNav J6M Algorithm HIL Architecture Baseline
 
-**Status:** FROZEN  
-**Baseline:** J6M-HIL v1.0  
-**Date:** 2026-09-03  
+**Status:** FROZEN
+**Baseline:** J6M-HIL v1.0
+**Date:** 2026-09-03
 **Remaining schedule:** approximately 15 days
 
 ---
