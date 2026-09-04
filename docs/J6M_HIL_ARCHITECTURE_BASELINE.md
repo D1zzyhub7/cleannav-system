@@ -695,3 +695,286 @@ do not place J6M hardware details into platform-independent modules
 ```
 
 The project now prioritizes execution, validation and competition readiness.
+
+---
+
+## 20. 2026-09-04 Physical J6M HIL Bring-up
+
+This section records physical-board evidence obtained on 2026-09-04.
+
+Facts marked as verified below are measured results from the physical J6M.
+The deployment architecture described later is a candidate plan and has
+not yet been implemented.
+
+### 20.1 Physical platform
+
+Verified board and operating-system information:
+
+- Board: `J6M_SIP_Matrix_V1.1`
+- Architecture: `aarch64`
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: Linux 6.1.158 with PREEMPT_RT
+- Shell authority: root
+
+Verified power configuration:
+
+- Power adapter: 12 V DC, 6.67 A, 80 W
+- Red/black power pair is sufficient for normal boot.
+- The additional yellow/ACC-style line is not used in the verified boot setup.
+
+### 20.2 Debug access
+
+ADB access from Windows was verified.
+
+- adb protocol version: 1.0.41
+- Android platform-tools: 37.0.1
+- Device ID: `083207a8309228a2`
+- ACore shell: root
+- Native Ethernet SSH is also available.
+
+ADB remains a useful recovery/debug channel, but Ethernet is the intended
+communication path for HIL.
+
+### 20.3 J6M Ethernet
+
+Verified J6M interfaces:
+
+- `eth0 = 192.168.8.10/24`
+- `eth1 = 10.7.0.118/24`
+- Driver: `hobot_gmac`
+- Link mode: fixed/SGMII
+- Link speed: 1000 Mb/s Full Duplex
+- SSH server: TCP port 22
+
+Verified PC-side dedicated Ethernet interface:
+
+- Adapter: Realtek PCIe GbE Family Controller
+- Address: `192.168.8.20/24`
+- No dedicated default gateway is required for the J6M link.
+
+The currently verified hardware path is:
+
+    J6M
+      -> 1000M Master T1 cable
+      -> SE1001Pro
+      -> RJ45 Ethernet cable
+      -> Windows Realtek Ethernet
+
+The cable labelled `1000M Slave` did not provide a reliable operating
+configuration in this setup.
+
+Using the `1000M Master` path, the following were verified:
+
+- Windows Ethernet status: Up
+- Link speed: 1 Gbps
+- PC to J6M ping: 50/50 replies
+- Packet loss: 0%
+- RTT: approximately 1-2 ms
+- SSH TCP/22: PASS
+
+### 20.4 SE1001Pro observations
+
+Observed converter state during successful operation:
+
+- RUN indicator: normal flashing
+- T1 Link indicator: active
+- SQI: 100%
+- RJ45: 1 Gbps when mechanically stable
+
+A reproducible mechanical robustness problem was observed:
+
+- Lifting or moving the SE1001Pro can cause the RJ45 link to drop.
+- The PC Realtek port and replacement RJ45 cable were independently
+  verified using a router.
+- The same failure was not reproduced with the PC port and RJ45 cable alone.
+
+Current leading diagnosis:
+
+    suspected SE1001Pro RJ45 mechanical/contact fault
+
+Possible fault locations include the RJ45 receptacle, connector contacts,
+local solder joints or nearby PCB mechanical integrity.
+
+The T1 side itself did not indicate poor signal quality because the
+SE1001Pro continuously reported `SQI = 100%`.
+
+### 20.5 Stationary-link stability
+
+With the converter and all cables left mechanically undisturbed, the
+link was stable.
+
+Verified results:
+
+- Windows Ethernet: Up
+- Windows link speed: 1 Gbps
+- Windows to J6M ping: 50/50, 0% packet loss
+- WSL route to `192.168.8.10`: via mirrored `eth1`
+- WSL source address: `192.168.8.20`
+- WSL to J6M SSH: PASS
+- J6M eth0: 1000 Mb/s Full Duplex
+- J6M Link detected: yes
+
+The following J6M error counters remained zero:
+
+- `mmc_tx_carrier_error`
+- `mmc_rx_crc_error`
+- `mmc_rx_udp_err`
+- `rx_crc_errors`
+- `rx_gmac_overflow`
+- `rx_missed_cntr`
+- `rx_overflow_cntr`
+- `rx_buf_unav_irq`
+
+A two-minute stationary-link test executed 12 consecutive checks.
+
+Result:
+
+- 12/12 Windows status: Up
+- 12/12 Windows speed: 1 Gbps
+- 12/12 WSL SSH: PASS
+
+Current interpretation:
+
+- Stationary Ethernet link: VERIFIED STABLE
+- Mechanical robustness: NOT VERIFIED
+- SE1001Pro RJ45 fault: SUSPECTED AND MECHANICALLY REPRODUCIBLE
+
+### 20.6 UDP measurements
+
+Earlier UDP measurements showed inconsistent reception while the
+SE1001Pro hardware path was mechanically suspect.
+
+Representative measurements included approximately 53-58 received
+packets out of 100.
+
+One instrumented Windows-to-J6M run measured:
+
+- Windows `SentUnicastPackets`: +100
+- J6M `mmc_rx_udp_gd`: +58
+- J6M UDP `InDatagrams`: +58
+- Application `RX_UNIQUE`: 58/100
+
+During that run there was no increase in:
+
+- CRC errors
+- UDP errors
+- GMAC overflow
+- RX missed counters
+- RX buffer unavailable IRQs
+
+Because the SE1001Pro RJ45 mechanical problem was subsequently reproduced,
+these UDP-loss results are not accepted as valid ROS 2 or DDS network
+qualification evidence.
+
+UDP multicast and DDS qualification must be repeated with a mechanically
+trustworthy Ethernet path.
+
+### 20.7 Board deployment environment
+
+The current J6M runtime does not contain a ROS 2 development/runtime
+installation suitable for CleanNav.
+
+Verified absent tools include:
+
+- `ros2`
+- `colcon`
+- `gcc`
+- `g++`
+- `cmake`
+- `make`
+
+No `/opt/ros` installation was found.
+
+The J6M system uses a protected platform layout including overlay root,
+dm-verity and secure/verified boot.
+
+CleanNav deployment must therefore not depend on disabling or modifying
+the verified root filesystem.
+
+Verified writable deployment area:
+
+- Path: `/map`
+- Device: `/dev/mmcblk0p32`
+- Filesystem: ext4
+- Mount state: rw
+- Capacity: approximately 15 GB
+- Available space: approximately 14 GB
+- Script execution from `/map`: PASS
+
+Verified host utilities include:
+
+- `chroot`
+- `mount`
+- `umount`
+- `findmnt`
+- `tar`
+- `gzip`
+- `xz`
+- `scp`
+- `sftp`
+- `wget`
+
+The following virtual filesystems are available for a future chroot:
+
+- `/proc`
+- `/sys`
+- `/dev`
+- `/dev/pts`
+- `/dev/shm`
+
+### 20.8 Candidate ROS 2 deployment architecture
+
+The current candidate deployment layout is:
+
+    /map/cleannav_runtime/
+    `-- jammy/
+
+The candidate is an Ubuntu 22.04 ARM64 userspace operated through chroot.
+
+Its purpose is to preserve compatibility with the already validated PC
+software baseline:
+
+- ROS 2 Humble
+- Nav2
+- Smac Hybrid-A*
+- MPPI Ackermann
+- CleanNav Navigation
+
+The J6M native kernel, device drivers, Ethernet interfaces and vendor
+runtime would remain unchanged.
+
+This is a candidate architecture only.
+
+It has not yet been installed or accepted as J6M runtime evidence.
+
+### 20.9 Current HIL gate status
+
+Current physical-board status:
+
+- J6-HIL-0A Power + USB/ADB: PASS / CLOSED
+- J6-HIL-0B Shell / OS / basic network audit: PASS / CLOSED
+- J6-HIL-0C Board / runtime audit: PASS / CLOSED
+- J6-HIL-0D Deployment environment audit: PASS / CLOSED
+- J6-HIL-0E `/map` writable/executable proof: PASS / CLOSED
+- J6-HIL-0F USB host capability audit: PASS / CLOSED
+  - USB host capability was not proven active.
+- J6-HIL-0G Ethernet PHY / driver mapping: PASS / CLOSED
+- J6-HIL-1 PC to J6M basic Ethernet and SSH: PASS / CLOSED
+- J6-HIL-2A ROS 2 deployment environment audit: PASS / CLOSED
+- J6-HIL-2B Jammy chroot feasibility audit: PASS / CLOSED
+- J6-HIL-2C Network qualification: PARTIAL / HARDWARE-LIMITED
+
+For J6-HIL-2C:
+
+- Stationary physical link: PASS
+- Mechanical robustness: NOT ACCEPTED
+- UDP multicast: DEFERRED
+- ROS 2 DDS: DEFERRED
+
+Current hardware blocker:
+
+    suspected SE1001Pro RJ45 mechanical/contact fault
+
+Deployment preparation may continue while the converter remains stationary,
+but final DDS, network-stability and closed-loop HIL evidence must be
+repeated using a mechanically trustworthy Ethernet path.
