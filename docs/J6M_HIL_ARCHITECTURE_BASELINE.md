@@ -978,3 +978,229 @@ Current hardware blocker:
 Deployment preparation may continue while the converter remains stationary,
 but final DDS, network-stability and closed-loop HIL evidence must be
 repeated using a mechanically trustworthy Ethernet path.
+
+
+## 21. 2026-09-04 Jammy / ROS 2 Humble Runtime Bring-up
+
+### 21.1 Clock synchronization
+
+The J6M system clock was manually synchronized from the WSL host before package installation.
+
+Final clock consistency proof:
+
+- J6 host epoch and Jammy chroot epoch were identical.
+- `CLOCK_DELTA_SECONDS=0`.
+- `CHROOT_CLOCK_CONSISTENCY=PASS`.
+- Timezone remained `+0800 CST`.
+
+The onboard RTC remains a known platform limitation. Although `hwclock -w -u -f /dev/rtc0` returned success, the RTC sysfs time did not change from its old value. Therefore:
+
+- runtime system clock: PASS;
+- Jammy chroot clock: PASS;
+- RTC persistence: FAIL / non-blocking;
+- after every future reboot or power cycle, host time must be synchronized again before APT, ROS, logging, or HIL testing.
+
+### 21.2 Repository access through WSL reverse tunnels
+
+Because the J6M host has no proven direct Internet access, repository access was provided through SSH reverse tunnels from J6M to WSL:
+
+- `127.0.0.1:18080 -> WSL -> ports.ubuntu.com:80`
+- `127.0.0.1:18081 -> WSL -> packages.ros.org:80`
+
+Both listeners were verified on J6M.
+
+Ubuntu Jammy ARM64 repository proof:
+
+- Ubuntu `InRelease` returned HTTP 200;
+- signed payload was present;
+- `apt-get update` successfully downloaded Jammy ARM64 package indices;
+- main, restricted, universe, and multiverse indices were verified.
+
+ROS 2 repository proof:
+
+- ROS 2 Jammy `InRelease` returned HTTP 200;
+- signed payload was present;
+- ROS 2 ARM64 package index was downloaded successfully.
+
+The repository tunnel is a development/HIL transport mechanism only and is not part of the final vehicle runtime architecture.
+
+### 21.3 ROS 2 APT bootstrap
+
+The verified bootstrap package was installed inside the Jammy chroot:
+
+- package: `ros2-apt-source`;
+- version: `1.2.0~jammy`;
+- architecture: `all`;
+- status: `install ok installed`.
+
+The installed source configuration resolves inside the chroot as:
+
+`/etc/apt/sources.list.d/ros2.sources -> /usr/share/ros-apt-source/ros2.sources`
+
+The ROS 2 signing key and repository configuration were both verified.
+
+### 21.4 Humble ARM64 package availability
+
+The ROS 2 Jammy ARM64 index confirmed availability of:
+
+- `ros-humble-ros-base`;
+- `ros-humble-navigation2`;
+- `ros-humble-nav2-bringup`;
+- `ros-humble-nav2-smac-planner`;
+- `ros-humble-nav2-mppi-controller`.
+
+Observed Nav2 package version was `1.1.20`.
+
+The package architecture reported by APT and dpkg was `arm64`.
+
+### 21.5 ROS Base installation
+
+A dry-run dependency audit was completed before installation.
+
+Simulation result:
+
+- 6 packages upgraded;
+- 388 newly installed;
+- 394 package operations in total;
+- approximately 108 MB download;
+- approximately 442 MB additional installed space;
+- no kernel, bootloader, firmware, Horizon, or Hobot platform packages were detected by the risk scan.
+
+`ros-humble-ros-base` was then installed successfully inside:
+
+`/map/cleannav_runtime/jammy`
+
+Final evidence:
+
+- package version: `0.10.0-1jammy.20260804.223545`;
+- architecture: `arm64`;
+- status: `install ok installed`;
+- ROS distro: `humble`;
+- ROS version: `2`;
+- ROS Python version: `3`;
+- Python: `3.10.12`;
+- machine architecture: `aarch64`;
+- `ros2 --help`: PASS;
+- `rclpy` import: PASS;
+- `rmw_fastrtps_cpp`: installed;
+- `dpkg --audit`: PASS;
+- APT dependency check: PASS;
+- `/opt/ros/humble`: approximately 107 MB;
+- installed ROS Humble package count: 193.
+
+After installation `/map` remained below 10% utilization.
+
+### 21.6 Local Fast DDS runtime proof
+
+A two-process ROS 2 pub/sub smoke test was executed entirely on the J6M.
+
+Test configuration:
+
+- `ROS_DOMAIN_ID=42`;
+- `ROS_LOCALHOST_ONLY=1`;
+- `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`.
+
+A separate rclpy publisher and subscriber successfully exchanged:
+
+`J6_HIL_DDS_OK`
+
+Final result:
+
+- subscriber initialization: PASS;
+- publisher initialization: PASS;
+- Fast DDS local discovery: PASS;
+- message delivery: PASS;
+- residual test processes: none;
+- residual mounts: none.
+
+Therefore the J6M ARM64 ROS 2 runtime and local Fast DDS path are verified.
+
+### 21.7 Cross-machine DDS status
+
+A cross-machine test was then performed between:
+
+- WSL2 Ubuntu 22.04 / ROS 2 Humble / amd64;
+- J6M Jammy chroot / ROS 2 Humble / arm64.
+
+Basic IPv4 connectivity remained healthy:
+
+- WSL: `192.168.8.20`;
+- J6M eth0: `192.168.8.10`;
+- eth0 carrier: up;
+- 10/10 ICMP packets received;
+- 0% packet loss.
+
+For the WSL publisher to J6 subscriber test:
+
+- WSL publisher ran successfully;
+- J6 subscriber started successfully;
+- Fast DDS message delivery did not occur;
+- J6 subscriber timed out after 20 seconds.
+
+Therefore:
+
+`J6-HIL-2E2B2 cross-machine DDS = FAIL / OPEN`
+
+The failure has not yet been root-caused. Current candidates include Fast DDS discovery behavior, multicast transport, or network-interface selection. It must not yet be attributed to any single layer.
+
+The existing SE1001Pro mechanical/contact concern also remains relevant when interpreting future network tests.
+
+### 21.8 ROS 2 daemon cleanup
+
+The `ros2 topic` CLI test spawned a persistent ROS 2 daemon for domain 43.
+
+The daemon:
+
+- remained after the CLI test;
+- held the Jammy `/dev` and `/dev/shm` bind mounts busy;
+- did not terminate after SIGTERM.
+
+After the daemon was positively identified as the test-created chroot ROS 2 daemon, SIGKILL was applied only to that exact PID.
+
+Final cleanup proof:
+
+- daemon exited;
+- no processes remained rooted in the Jammy chroot;
+- `/dev/shm` unmounted normally;
+- `/dev` unmounted normally;
+- no residual Jammy mounts remained;
+- no domain-43 ROS 2 daemon remained.
+
+### 21.9 End-of-day checkpoint
+
+At the end of the 2026-09-04 session:
+
+PASS:
+
+- J6M physical power and ADB;
+- dedicated Ethernet and SSH;
+- Jammy ARM64 chroot;
+- native ARM64 chroot execution;
+- runtime VFS access;
+- corrected system clock;
+- signed Ubuntu APT access;
+- signed ROS 2 APT access;
+- ROS 2 Humble ros-base installation;
+- rclpy runtime;
+- Fast DDS local two-process communication.
+
+OPEN:
+
+- RTC persistence;
+- cross-machine WSL/J6 Fast DDS communication;
+- final mechanical robustness of the SE1001Pro path.
+
+DEFERRED:
+
+- Nav2 installation;
+- Hybrid-A* / MPPI runtime validation on J6M;
+- CleanNav navigation deployment;
+- Mission Manager and HMI integration HIL.
+
+Next power-on procedure:
+
+1. verify ADB / Ethernet / SSH;
+2. immediately synchronize J6M system time from the development host because RTC persistence is not available;
+3. verify Jammy rootfs and ROS Humble installation;
+4. continue cross-machine DDS diagnosis using direct rclpy tests without `ros2 topic` daemon dependency;
+5. after DDS transport is understood, proceed to Nav2 installation and Navigation HIL.
