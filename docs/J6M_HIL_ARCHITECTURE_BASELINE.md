@@ -1,21 +1,65 @@
 # CleanNav J6M Algorithm HIL Architecture Baseline
 
-**Status:** FROZEN
-**Baseline:** J6M-HIL v1.0
-**Date:** 2026-09-03
-**Remaining schedule:** approximately 15 days
+**Status:** M0 FROZEN — component SHAs and local tag finalized
+**Baseline:** `competition-hil-baseline-20260921`
+**Date:** 2026-09-21
+
+> The earlier physical Navigation Algorithm HIL plan and its DDS experiments are
+> retained below as historical evidence. They are not the M0 operational path.
+
+## 0. M0 Competition HIL operational path
+
+The current repeatable competition path is:
+
+```text
+Phone APP
+    -> PC HMI Gateway
+    -> HTTP/TCP
+    -> J6M Mission Manager HTTP ingress
+    -> J6 navigation events/results over HTTP
+    -> PC HIL Execution Bridge
+    -> frozen task30 PC Showcase runtime
+    -> Nav2 / Safety / Gazebo
+```
+
+The current Voice path is separate from the APP path:
+
+```text
+PC microphone
+    -> SenseVoice / VoicePolicy
+    -> TaskCommand(source=VOICE)
+    -> HTTP HIL
+    -> J6M Mission Manager
+```
+
+The boundaries are fixed for M0:
+
+- J6 Mission Manager is the external mission authority.
+- PC Navigation/Safety is the simulation execution adapter.
+- PC Voice still produces the formal `TaskCommand`; HTTP is only its HIL transport.
+- PC HMI Gateway forces `source=APP=2` and does not publish `/cmd_vel`.
+- The PC physical leaf-completion latch is Showcase-only semantics.
+- M0 is a Competition HIL baseline, not the final vehicle architecture.
+
+Cross-machine DDS was tested experimentally. Due to WSL/Windows/Hyper-V UDP
+inbound and discovery issues, DDS is marked `DEFERRED / EXPERIMENTAL` and is
+not the M0 operational transport.
 
 ---
 
-## 1. Objective
+## 1. Frozen M0 Objective and Future Direction
 
-The near-term objective is to complete a repeatable **Navigation Algorithm HIL** closed loop on the physical Horizon Journey J6M.
+M0 freezes a repeatable **Competition HIL** path without changing the verified
+PC Showcase, Voice, Mission Manager or Navigation runtime contracts. Physical
+J6M algorithm execution is a separate future track.
 
-After Navigation HIL is stable, extend the same HIL environment to:
+Future work is explicitly outside the current M0 capability:
 
-1. Mission Manager;
-2. APP task control;
-3. offline voice task control.
+1. M1 — APP HIL runtime completion;
+2. M2 — SenseVoice / ASR to J6M BPU / HBM;
+3. M3 — APP Gateway and Voice runtime J6-native;
+4. M4 — real vehicle integration;
+5. M5 — navigation hardening.
 
 Perception remains part of the final vehicle architecture, but leaf/puddle perception is not the current critical path.
 
@@ -25,7 +69,8 @@ The project now prioritizes integration and verification over further architectu
 
 ## 2. Frozen HIL Definition
 
-CleanNav uses **algorithm-level HIL** as the current baseline.
+The historical J6M Algorithm HIL definition below is retained for future
+physical-board work. It is not the current M0 Competition HIL baseline.
 
 ### PC side
 
@@ -73,19 +118,19 @@ A PC-only algorithm run is SIL, not J6M HIL.
 
 ---
 
-## 3. Frozen Priority
+## 3. M0 Priority
 
 ```text
-P0  J6M environment and ROS 2 compatibility
-P1  Navigation HIL
-P2  Navigation HIL repeatability and evidence
-P3  Mission Manager HIL
-P4  APP TaskCommand HIL
-P5  Offline Voice TaskCommand HIL
-P6  Minimal perception HIL if time permits
+P0  formal interface and source identity
+P1  PC Gazebo Showcase execution path
+P2  J6 Mission Manager HTTP HIL ingress/events/results
+P3  APP -> PC Gateway -> J6 HIL
+P4  PC Voice -> TaskCommand -> J6 HIL
+P5  reproducible evidence and component pinning
 ```
 
-Navigation HIL must not be sacrificed for lower-priority features.
+Physical J6M algorithm HIL remains a separate future track and must not change
+the already-verified M0 PC Showcase or HIL contracts.
 
 ---
 
@@ -98,7 +143,7 @@ The following are not part of the current critical path:
 - multi-camera perception;
 - BEV perception;
 - VLA or LLM deployment;
-- custom TCP/UDP HIL middleware before DDS is tested;
+- custom transport variants outside the M0 HTTP/TCP path;
 - physical CAN integration before Navigation HIL;
 - PTP/gPTP tuning before functional HIL works;
 - replacing Hybrid-A* or MPPI;
@@ -107,7 +152,7 @@ The following are not part of the current critical path:
 
 ---
 
-## 5. HIL-V1 — Navigation HIL
+## 5. Historical J6M Algorithm HIL — deferred from M0
 
 ### PC provides
 
@@ -168,39 +213,38 @@ The PC Ackermann plant consumes the command and produces new `/odom` and `/scan`
 
 ## 6. Transport Baseline
 
-First choice:
+M0 operational transport:
 
 ```text
-ROS 2 DDS over Ethernet
+HTTP/TCP over the reachable Ethernet/Wi-Fi path
 ```
 
 Initial architecture:
 
 ```text
-PC ROS 2
+PC APP / Voice / HMI Gateway
     ↕
-Ethernet / DDS
+HTTP/TCP
     ↕
-J6M ROS 2
+J6 Mission Manager HTTP HIL server
 ```
 
-Requirements:
+M0 requirements:
 
 - reachable IP addresses;
-- same `ROS_DOMAIN_ID`;
-- compatible DDS/RMW;
-- compatible QoS.
+- bounded HTTP timeout and retry behavior;
+- idempotent command/event handling;
+- explicit `TaskCommand` source and command identity preservation.
 
-Do not implement a custom HIL bridge before direct DDS is tested.
+Historical DDS experiment:
 
-A bridge is fallback only if direct DDS fails because of:
+```text
+PC ROS 2 <-> Ethernet/DDS <-> J6M ROS 2
+```
 
-- discovery;
-- ROS distribution incompatibility;
-- middleware incompatibility;
-- multicast/network restrictions;
-- unacceptable latency;
-- unacceptable bandwidth or jitter.
+Status: `DEFERRED / EXPERIMENTAL / NOT M0 OPERATIONAL PATH`.
+The historical cross-machine test did not deliver Fast DDS messages under the
+WSL/Windows/Hyper-V network path; the historical evidence remains below.
 
 ---
 
@@ -354,34 +398,62 @@ Task Catalog remains the task expansion authority.
 
 ---
 
-## 12. HIL-V2 — Mission Manager + HMI
+## 12. M0 Mission Manager + APP + Voice HIL
 
-After Navigation HIL is stable:
+The current M0 path is:
 
 ```text
-TaskCommand(task_id)
+Phone APP
+    ↓ HTTP
+PC HMI Gateway
+    ↓ HTTP `/task`
+J6M Mission Manager
+    ↓ HTTP `/nav/events` and `/nav/result`
+PC HIL Execution Bridge
     ↓
-Mission Manager on J6M
+frozen task30 PC Showcase runtime
     ↓
-Navigation
-    ↓
-Hybrid-A*
-    ↓
-MPPI
-    ↓
-Safety
-    ↓
-PC Gazebo vehicle
+Nav2 / Safety / Gazebo
 ```
 
 APP:
 
 ```text
-APP
+Phone APP
+    ↓ HTTP
+PC HMI Gateway
+    ↓ HTTP /task
+J6M Mission Manager
+```
+
+The Gateway accepts `POST /api/tasks`, `GET /api/state`, `GET /api/map` and
+`POST /api/emergency-reset`. It forwards APP tasks to the J6 `/task` ingress
+and returns the upstream delivery result.
+It forces `source=APP=2`; APP never publishes `/cmd_vel`.
+
+Voice:
+
+```text
+PC microphone
+    ↓
+SenseVoice / VoicePolicy
+    ↓
+TaskCommand(source=VOICE)
+    ↓ HTTP HIL adapter
+J6 Mission Manager
+```
+
+Voice is not forwarded through the APP. J6-native Voice is an M2/M3 future
+track and should preserve the formal Voice-to-TaskCommand boundary.
+
+Historical future design:
+
+```text
+APP or Voice
     ↓
 TaskCommand(task_id)
     ↓
-Mission Manager
+Mission Manager on J6M
 ```
 
 Offline voice:
@@ -397,6 +469,31 @@ Mission Manager
 APP and voice must not create separate low-level control paths.
 
 Offline voice must not directly map a phrase to `RESET_ESTOP`.
+
+### M0 Verification Evidence
+
+- Interfaces build/interface verification: `PASS`;
+- Navigation config + scene: `49 passed`;
+- NavigationFacade: `26 passed`;
+- Navigation scene suite: `43 passed`;
+- Navigation independent build: `6 packages finished`;
+- RTAB: portable `38-line` config, machine path count `0`;
+- Mission Manager: `584 passed`, `1 skipped`;
+- Voice: `51 passed`;
+- HMI Python: `19 passed`;
+- HMI Flutter analyze/test/build: `UNVERIFIED` because Flutter/Dart SDK is unavailable.
+
+### M0 Known Limitations
+
+1. Flutter analyze/test/build: `UNVERIFIED` in the current WSL environment;
+2. dedicated dynamic obstacle runtime: not separately validated;
+3. near-goal MPPI behavior: deferred for hardening;
+4. real vehicle calibration: not performed;
+5. physical leaf completion: Competition Demo semantics only;
+6. SenseVoice: currently PC-side;
+7. J6M BPU/HBM: not implemented in M0;
+8. cross-machine DDS: `DEFERRED / EXPERIMENTAL`;
+9. current operational HIL transport: HTTP/TCP.
 
 ---
 
@@ -598,7 +695,7 @@ recovery procedure
 
 ---
 
-## 16. HMI HIL Sequence
+## 16. Historical J6M HMI HIL Sequence — not M0 operational path
 
 After J6-HIL-5:
 
