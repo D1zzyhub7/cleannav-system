@@ -295,3 +295,39 @@ J6M HIL 的详细设计、历史实验和当前架构见：
 其中历史 DDS 实验属于技术记录，不代表比赛当前必须采用 DDS。
 
 当前比赛冻结链路仍以 HTTP/TCP HIL 为准。
+
+## 9. J6M VLM / Shadow Semantic Observer
+
+CleanNav 正在增加 J6M 端轻量多模态语义观察模块。
+
+总体链路：
+
+~~~text
+Camera
+→ SmolVLM2
+→ Semantic Observation
+→ Deterministic Rule Engine
+→ Shadow Decision
+~~~
+
+该模块不进入低层运动控制链，不直接发布 `/cmd_vel`。
+
+当前已完成：
+
+- PC SmolVLM2-500M semantic baseline；
+- 0.5 Hz 连续推理；
+- Shadow Decision parser/rules；
+- Official SmolVLM2 13-tile interface freeze；
+- Vision + Connector float ONNX freeze；
+- PyTorch ↔ ONNX 39-tile numerical parity；
+- 130-tile PTQ calibration dataset；
+- Docker Desktop / WSL2 / GPU passthrough；
+- J6 OpenExplorer 3.5.0 官方工具包下载。
+
+详细部署路线：
+
+[`docs/J6M_VLM_DEPLOYMENT.md`](docs/J6M_VLM_DEPLOYMENT.md)
+
+当前数据集、parity 与 PTQ calibration 记录：
+
+[`docs/J6M_VLM_DATASET.md`](docs/J6M_VLM_DATASET.md)
