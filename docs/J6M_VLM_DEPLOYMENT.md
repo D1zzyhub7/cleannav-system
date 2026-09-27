@@ -1,9 +1,9 @@
 # CleanNav J6M VLM Deployment
 
-> Status: Host-side deployment preparation  
-> Target: Horizon Journey 6M / `nash-m`  
-> VLM: `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`  
-> Runtime role: Shadow Semantic Observer  
+> Status: Host-side deployment preparation
+> Target: Horizon Journey 6M / `nash-m`
+> VLM: `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`
+> Runtime role: Shadow Semantic Observer
 > Last updated: 2026-09-27
 
 ---
