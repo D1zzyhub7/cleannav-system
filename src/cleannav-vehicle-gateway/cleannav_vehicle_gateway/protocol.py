@@ -18,6 +18,7 @@ import zlib
 
 MAGIC = b'CNVG'
 VERSION = 1
+SEMANTIC_REVISION = '1.1'
 MAX_DATAGRAM_BYTES = 512
 MAX_PAYLOAD_BYTES = MAX_DATAGRAM_BYTES - 24 - 4
 
@@ -409,7 +410,7 @@ def timestamp_is_fresh(
     now_ms: int | None = None,
     max_future_skew_ms: int = 200,
 ) -> bool:
-    """Check Unix timestamp age; peer clocks must be synchronized for NET-1."""
+    """Diagnostic-only Unix timestamp sanity helper; never gate V1.1 control."""
     if validity_ms < 0 or max_future_skew_ms < 0:
         return False
     now_ms = unix_time_ms() if now_ms is None else now_ms

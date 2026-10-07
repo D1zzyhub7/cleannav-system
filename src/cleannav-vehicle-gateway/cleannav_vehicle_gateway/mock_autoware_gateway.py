@@ -52,7 +52,7 @@ class MockFaults:
     out_of_order: bool = False
     malformed: bool = False
     delay_ms: int = 0
-    stale: bool = False
+    timestamp_offset_ms: int = 0
 
 
 class MockAutowareGateway:
@@ -77,14 +77,17 @@ class MockAutowareGateway:
         self.peer_port = int(peer_port)
         if not 0 <= self.bind_port <= 65535 or not 1 <= self.peer_port <= 65535:
             raise ValueError('invalid UDP port')
+        if self.bind_port in (4500, 4501, 6667) or self.peer_port in (4500, 4501, 6667):
+            raise ValueError('legacy IVCU UDP ports are reserved and forbidden')
         if rx_timeout_ms <= 0 or dynamics_tau_sec <= 0:
             raise ValueError('timeouts and dynamics time constant must be positive')
         self.rx_timeout_sec = rx_timeout_ms / 1000.0
         self.dynamics_tau_sec = dynamics_tau_sec
         self.faults = faults or MockFaults()
-        self.session_id = secrets.randbits(64) or 1
+        self.session_id = secrets.randbits(64)
         self.owner_id = 'MOCK-AUTOWARE'
         self.j6_session_id: int | None = None
+        self._retired_j6_sessions: set[int] = set()
         self.j6_owner_id: str | None = None
         self.arbiter = OwnerArbiter(self.rx_timeout_sec)
         self.arbiter.vehicle_mode = VehicleMode(vehicle_mode)
@@ -112,6 +115,7 @@ class MockAutowareGateway:
         self._malformed_sent = False
         self._accepted_commands = 0
         self._rejected_commands = 0
+        self._rejected_sessions = 0
         self._duplicate_commands = 0
         self._out_of_order_commands = 0
         self._malformed_packets = 0
@@ -167,14 +171,15 @@ class MockAutowareGateway:
         previous = time.monotonic()
         while not self._stop_event.is_set():
             now = time.monotonic()
-            self._receive_available(now)
+            self._receive_available()
+            now = time.monotonic()
             self.arbiter.tick(now)
             self._advance_dynamics(now, previous)
             previous = now
             self._send_periodic(now)
             self._stop_event.wait(0.01)
 
-    def _receive_available(self, now: float) -> None:
+    def _receive_available(self) -> None:
         udp = self._socket
         if udp is None:
             return
@@ -188,7 +193,8 @@ class MockAutowareGateway:
                 return
             if source != (self.peer_ip, self.peer_port):
                 continue
-            self._last_rx_monotonic = now
+            received_at = time.monotonic()
+            self._last_rx_monotonic = received_at
             if self.faults.drop_rx:
                 continue
             try:
@@ -196,21 +202,28 @@ class MockAutowareGateway:
             except ProtocolError:
                 self._malformed_packets += 1
                 continue
-            self._handle_packet(packet, message, now)
+            self._handle_packet(packet, message, received_at)
 
     def _handle_packet(self, packet, message, now: float) -> None:
         if packet.message_type is MessageType.HELLO:
             if not isinstance(message, Hello) or message.role is not PeerRole.J6M_GATEWAY:
                 self._malformed_packets += 1
                 return
-            if not self._timestamp_fresh(packet.timestamp_ms, 1500):
-                self._stale_packets += 1
-                return
             if message.session_id != self.j6_session_id:
+                if message.session_id in self._retired_j6_sessions:
+                    self._rejected_sessions += 1
+                    return
+                if self.j6_session_id is not None:
+                    self._retired_j6_sessions.add(self.j6_session_id)
                 self.j6_session_id = message.session_id
                 self.j6_owner_id = message.owner_id
                 self._rx_windows = {}
-                self.arbiter.release_owner()
+                self.arbiter.peer_heartbeat_monotonic = None
+                self._last_heartbeat_rx_monotonic = None
+                self._last_valid_command_monotonic = None
+                self._last_command = None
+                if self.arbiter.owner is CommandOwner.J6M:
+                    self.arbiter.release_owner()
             self._last_hello_rx_monotonic = now
             return
 
@@ -223,9 +236,6 @@ class MockAutowareGateway:
                 or message.owner_id != self.j6_owner_id
             ):
                 self._rejected_commands += 1
-                return
-            if not self._timestamp_fresh(packet.timestamp_ms, 1500):
-                self._stale_packets += 1
                 return
             disposition = self._sequence(MessageType.HEARTBEAT, packet.sequence)
             if disposition is not SequenceDisposition.ACCEPT:
@@ -248,28 +258,18 @@ class MockAutowareGateway:
             if not session_valid:
                 self._rejected_commands += 1
                 return
-            age_ms = unix_time_ms() - packet.timestamp_ms
-            timestamp_valid = -200 <= age_ms <= message.validity_ms
-            if not timestamp_valid:
-                self._stale_packets += 1
-                return
             disposition = self._sequence(
                 MessageType.CONTROL_COMMAND, packet.sequence
             )
             if disposition is not SequenceDisposition.ACCEPT:
                 self._count_sequence_rejection(disposition)
                 return
-            remaining_validity_sec = max(
-                0.0,
-                (message.validity_ms - max(age_ms, 0)) / 1000.0,
-            )
             accepted = self.arbiter.accept_j6m_command(
                 message,
                 now_monotonic=now,
                 session_valid=session_valid,
                 sequence_valid=True,
-                timestamp_valid=True,
-                command_valid_for_sec=remaining_validity_sec,
+                command_valid_for_sec=message.validity_ms / 1000.0,
             )
             if accepted:
                 self._accepted_commands += 1
@@ -290,11 +290,6 @@ class MockAutowareGateway:
             self._duplicate_commands += 1
         else:
             self._out_of_order_commands += 1
-
-    @staticmethod
-    def _timestamp_fresh(timestamp_ms: int, validity_ms: int) -> bool:
-        age_ms = unix_time_ms() - timestamp_ms
-        return -200 <= age_ms <= validity_ms
 
     def _advance_dynamics(self, now: float, previous: float) -> None:
         if self.faults.freeze_state:
@@ -368,8 +363,7 @@ class MockAutowareGateway:
             driver_alive=True,
             fault_code=0,
         )
-        timestamp = unix_time_ms() - (10_000 if self.faults.stale else 0)
-        datagram = self._encode_next(state, timestamp_ms=timestamp)
+        datagram = self._encode_next(state)
         self._send_raw(datagram)
         if self.faults.duplicate_seq:
             self._send_raw(datagram)
@@ -411,7 +405,14 @@ class MockAutowareGateway:
         message_type = self._message_type(message)
         sequence = self._sequences[message_type]
         self._sequences[message_type] = (sequence + 1) & 0xFFFFFFFF
+        if timestamp_ms is None:
+            timestamp_ms = self._timestamp_ms()
         return encode_message(message, sequence, timestamp_ms=timestamp_ms)
+
+    def _timestamp_ms(self) -> int:
+        """Return diagnostic timestamp with optional test-only clock offset."""
+        offset = self.faults.timestamp_offset_ms
+        return unix_time_ms() + offset
 
     @staticmethod
     def _message_type(message: object) -> MessageType:
@@ -451,6 +452,7 @@ class MockAutowareGateway:
             'steering_rad': self._steering_rad,
             'accepted_commands': self._accepted_commands,
             'rejected_commands': self._rejected_commands,
+            'rejected_sessions': self._rejected_sessions,
             'duplicate_commands': self._duplicate_commands,
             'out_of_order_commands': self._out_of_order_commands,
             'malformed_packets': self._malformed_packets,
@@ -474,7 +476,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--duplicate-seq', action='store_true')
     parser.add_argument('--out-of-order', action='store_true')
     parser.add_argument('--malformed', action='store_true')
-    parser.add_argument('--stale', action='store_true')
+    parser.add_argument('--timestamp-offset-ms', type=int, default=0)
     parser.add_argument('--delay-ms', type=int, default=0)
     parser.add_argument(
         '--initial-owner',
@@ -509,7 +511,7 @@ def main(argv: list[str] | None = None) -> None:
         out_of_order=args.out_of_order,
         malformed=args.malformed,
         delay_ms=args.delay_ms,
-        stale=args.stale,
+        timestamp_offset_ms=args.timestamp_offset_ms,
     )
     gateway = MockAutowareGateway(
         bind_ip=args.bind_ip,

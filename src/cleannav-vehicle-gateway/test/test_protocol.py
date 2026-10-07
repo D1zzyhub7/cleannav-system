@@ -140,7 +140,7 @@ def test_nonfinite_command_values_are_rejected():
         encode_message(command, 1)
 
 
-def test_timestamp_freshness_rejects_old_and_far_future_packets():
+def test_timestamp_diagnostic_sanity_helper_only():
     now = 10_000
 
     assert timestamp_is_fresh(9_800, 300, now_ms=now, max_future_skew_ms=200)

@@ -1,0 +1,6 @@
+# Preparation defaults only. Do not load in a vehicle profile.
+skeleton_enabled: false
+legacy_input_topic: /vehicle_cmd_legacy
+output_vehicle_cmd_topic: /vehicle_cmd
+# Intentionally empty: gear conversion remains disabled until vehicle review.
+gear_map: {}

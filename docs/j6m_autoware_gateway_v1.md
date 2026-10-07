@@ -1,12 +1,15 @@
-# CleanNav × Legacy Autoware vehicle gateway V1
+# CleanNav × Legacy Autoware vehicle gateway V1.1
 
-Status: **OFFLINE VERIFIED** (ROS 2 workspace build, localhost UDP integration,
-and full workspace regression passed). This document describes a loopback-only
-development protocol. It is **NOT YET HARDWARE VERIFIED**.
+Status: **NET-OFFLINE-V1 CHECKPOINTED; NET-OFFLINE-V2 PASS**. The CNVG
+Protocol V1 wire layout uses V1.1 freshness semantics. Offline verification:
+`colcon build` passed (9 ROS2 packages), and `colcon test-result --verbose`
+reported 805 tests, 0 errors, 0 failures, 1 skipped. Python/C++14 interoperability
+passed. This is **NOT HARDWARE VERIFIED**.
 
 No code in this package sends the legacy IVCU protocol. It does not use UDP
-4500, 4501, or 6667, and it does not publish ROS 1 /vehicle_cmd. The future ROS 1
-adapter is documented below and is **NOT BUILT / NEED AUTOWARE RUNTIME**.
+4500, 4501, or 6667, and it does not publish ROS 1 /vehicle_cmd. The future
+ROS1 source skeleton is under `integration/legacy_autoware_gateway_ros1/`; it is
+**NOT BUILT AGAINST TARGET AUTOWARE**.
 
 ## Architecture
 
@@ -36,8 +39,9 @@ parameterized **OFFLINE_DEFAULTS**, not a hardware port allocation.
 
 ## Protocol Header
 
-All fields use network byte order (big endian). Header and payload are encoded
-field-by-field with Python struct; no language ABI or compiler padding is used.
+All fields use network byte order (big endian). The Python codec uses `struct`
+and the C++14 reference writes each field explicitly; no compiler ABI or padding
+is used.
 The fixed header is 24 bytes:
 
 | Offset | Width | Field | V1 value / meaning |
@@ -59,11 +63,18 @@ layer but are rejected for every defined message type. Maximum datagram size is
 512 bytes. Wrong magic, version, type, flags, length, payload enum, or CRC is
 rejected before it can update command/state.
 
-The timestamp is Unix time, not a cross-host monotonic clock. Receivers enforce
-the message-specific age/validity and allow at most 200 ms future skew.
-Autoware PC and J6M clocks must be synchronized before NET-1. CRC detects
-corruption; it is not authentication. NET-1 must isolate the control segment
-and validate peer addresses and firewall policy.
+The header timestamp is Unix epoch milliseconds for packet-capture correlation
+and diagnostics only. The wire version byte remains 1; the semantic revision
+is CNVG Protocol V1.1. Control freshness does not compare sender and receiver
+wall clocks. The command receiver timestamps each accepted datagram on its own
+monotonic clock and expires that command after `command_validity_ms`. Session,
+sequence, and heartbeat age are independent gates. Clock synchronization may
+improve log correlation, but is not a control-safety requirement. V1.0 peers
+that use sender wall-clock age checks are not guaranteed safe semantic
+interoperation and must not be mixed silently with V1.1 peers. CRC detects
+corruption; it is not authentication. Production requires isolated vehicle
+Ethernet, explicit peer IP allowlisting, firewall rules, source-address
+validation, a dedicated port, and no Internet exposure.
 
 ## Message Types
 
@@ -79,8 +90,12 @@ In struct formats, ! means network byte order, Q is uint64, I is uint32, H is
 uint16, B is uint8, b is int8, f is IEEE-754 binary32, and 16s is exactly
 16 ASCII bytes padded with zeroes. Owner IDs are 1–16 ASCII bytes.
 
-HELLO includes session_id, role, and owner_id. A new session_id resets the
-receiver's sequence windows. Roles are J6M_GATEWAY=1 and AUTOWARE_MOCK=2.
+HELLO includes session_id, role, and owner_id. Each process creates a new
+random 64-bit session ID with `secrets.randbits(64)` at startup. A new session
+resets receive sequence windows and command state. Session IDs already seen in
+the current process lifetime are retired and rejected, so a delayed old HELLO
+cannot roll the peer back to its former sequence window. Roles are
+J6M_GATEWAY=1 and AUTOWARE_MOCK=2.
 The mock uses the same AUTOWARE_MOCK role in this offline build; the production
 Autoware adapter role assignment is deferred to NET-1.
 
@@ -141,11 +156,14 @@ VEHICLE_STATE payload order:
 
 V1 carries no GNSS or raw IMU. Source-to-frame mapping and actual units from
 IVCU are **UNKNOWN / NEED RUNTIME VERIFICATION**. State is published only after
-packet CRC, type, session/owner, sequence, and timestamp checks.
+packet CRC, type, active session/owner, and sequence checks. The header timestamp
+is not an age gate.
 
 GATEWAY_STATUS payload is session_id, state enum, then uint32 values in order:
 last_rx_age_ms, last_tx_age_ms, rx_sequence, tx_sequence, dropped_packets,
-malformed_packets, stale_packets, out_of_order_packets.
+malformed_packets, stale_packets, out_of_order_packets. `stale_packets` remains
+in the V1 wire layout for diagnostics compatibility; V1.1 does not increment it
+from sender timestamp age.
 
 ## Timeouts
 
@@ -158,7 +176,7 @@ All are ROS parameters or CLI parameters.
 | SafetyStatus freshness | 1500 ms | Disable command output |
 | J6M peer heartbeat | 450 ms | Mark link stale and disable |
 | J6M vehicle-state freshness | 1000 ms | Mark link stale and disable |
-| CONTROL_COMMAND validity | 300 ms | Peer rejects after deadline |
+| CONTROL_COMMAND validity | 300 ms | Peer expires the locally received command after deadline |
 | Safe command burst | 300 ms | Send disabled zero command for a finite interval, then stop command TX |
 | Peer command RX timeout | 450 ms | OWNER_J6M is released; target is cleared |
 | HEARTBEAT interval | 100 ms | Peer liveness |
@@ -195,7 +213,8 @@ It sends no packet beyond the local mock.
 
 For custom fault runs, start the gateway and mock separately; the mock CLI
 supports `--drop-rx`, `--drop-tx`, `--freeze-state`, `--duplicate-seq`,
-`--out-of-order`, `--malformed`, `--stale`, and `--delay-ms N`. Its bind and
+`--out-of-order`, `--malformed`, `--timestamp-offset-ms N`, and `--delay-ms N`.
+Sender timestamp offsets are diagnostic fault injection only. Its bind and
 peer IPs must remain loopback. The packaged offline demo starts the mock with
 no injected fault.
 
@@ -205,7 +224,9 @@ Each sender maintains a uint32 sequence counter per message type. First sequence
 in a new session is accepted. A later packet is newer when
 delta=(new-old) mod 2^32 is in 1..2^31-1. delta=0 is duplicate; a delta at or
 above 2^31 is duplicate/out-of-order and rejected. This permits
-0xfffffffe, 0xffffffff, 0, 1. Receiving a new HELLO session resets windows.
+0xfffffffe, 0xffffffff, 0, 1. Receiving a new HELLO session resets windows
+and clears prior command state; old session IDs seen by the process remain
+rejected for that process lifetime.
 Duplicate packets are included in out_of_order_packets and separately counted
 as duplicate_packets in ROS diagnostics.
 
@@ -219,35 +240,42 @@ not used.
 
 ## Owner Arbitration
 
-The mock and future ROS 1 adapter use OWNER_NONE, OWNER_LEGACY_AUTOWARE, and
-OWNER_J6M:
+The offline Python mock models OWNER_NONE, OWNER_LEGACY_AUTOWARE, and
+OWNER_J6M to exercise command acceptance. It is not the production arbitration
+reference. The C++14 ROS-independent CommandArbiter below models explicit owner
+selection and transition requirements for the future ROS1 adapter.
 
-- J6M can claim only from OWNER_NONE after a valid session, live heartbeat,
-  fresh sequence/timestamp, enable=true, no E-stop, and autonomous vehicle mode.
+- The mock peer accepts J6M commands only with valid session, live heartbeat,
+  fresh sequence, receiver-local command validity, enable=true, no E-stop, and
+  autonomous vehicle mode. Unix timestamp is diagnostic-only.
+- The future production core selects J6M only after `request_owner(J6M)` and a
+  complete safe-zero transition; packet arrival never selects control owner.
 - OWNER_LEGACY_AUTOWARE cannot be stolen by an arriving J6M packet.
 - MANUAL, ESTOP, fault, bad driver/gateway health, or network/command timeout
   prevents or removes OWNER_J6M.
 - enable=false releases J6M and clears its last nonzero command.
 - E-stop latches and clears the active owner.
-- Legacy-to-J6M and J6M-to-legacy changes require an explicit future operator
-  or vehicle-mode decision. Disconnect alone never promotes another publisher.
+- Legacy-to-J6M and J6M-to-legacy changes require an explicit operator request
+  and a complete safe-zero transition. Disconnect alone never promotes another
+  publisher.
 
-Future j6m_vehicle_gateway_ros1 must be the unique /vehicle_cmd upstream
-arbiter. Either it alone publishes /vehicle_cmd after selecting
-OWNER_LEGACY_AUTOWARE or OWNER_J6M, or it publishes /j6m/vehicle_cmd and a
-single arbiter is the only /vehicle_cmd publisher. Autoware twist_gate must not
-publish concurrently with an unarbitrated J6M writer. This offline package
-does not change twist_gate and does not build a ROS 1 node.
+The C++14 ROS-independent arbiter is in `integration/cnvg_protocol/`. It clears
+J6M ownership and its requested owner on timeout, E-stop, manual mode, or fault.
+The ROS2 node's sender and mock receiver capture monotonic receive time per UDP
+datagram; Unix timestamps never gate command or state freshness.
+The ROS1 skeleton has one final `/vehicle_cmd` publisher declaration. A future
+legacy launch must route `twist_gate` to `/vehicle_cmd_legacy`; this phase does
+not change old Autoware launch/source and does not publish ROS1 vehicle commands.
 
 ## Fail-safe Behavior
 
 A CONTROL_COMMAND is actionable only after magic/version/length/CRC/type,
-session/owner, timestamp/validity, sequence, enable, emergency, peer heartbeat,
-and vehicle-mode checks. Timestamp validity is checked before advancing the
-sequence window. Any failed check does not refresh command age or sequence
-state and does not make an old nonzero command fresh. The mock clears the
-accepted command at the remaining validity deadline, even while heartbeats stay
-alive; peer RX timeout is an additional upper bound on ownership.
+session/owner, sequence, enable, emergency, peer heartbeat, and vehicle-mode
+checks. The Unix header timestamp is diagnostic-only. After acceptance, the
+receiver records local monotonic arrival and expires the command after
+command_validity_ms even while heartbeats stay alive; peer RX timeout is an
+additional upper bound on ownership. Duplicate, old-sequence, invalid-session,
+and malformed packets do not renew command age.
 
 J6M also requires a fresh SafetyStatus with autonomous_enabled=true,
 block_all=false, and emergency_stop_active=false. It requires fresh /cmd_vel.
@@ -291,9 +319,11 @@ No network command maps to /vehicle_cmd in this package.
 
 ## Future ROS1 Adapter
 
-Proposed node name: j6m_vehicle_gateway_ros1. This adapter is **NOT BUILT /
-NEED AUTOWARE RUNTIME**. It needs the real Autoware PC ROS 1 distribution and
-custom messages before it can compile.
+Proposed package/node name: `j6m_vehicle_gateway_ros1`. Source skeleton:
+`integration/legacy_autoware_gateway_ros1/`. It is **NOT BUILT AGAINST TARGET
+AUTOWARE** because the ROS1 distribution and target message package are unknown.
+Its intended architecture has one final `/vehicle_cmd` publisher; legacy
+`twist_gate` input must first be redirected to `/vehicle_cmd_legacy`.
 
 The future adapter should:
 
@@ -302,11 +332,11 @@ The future adapter should:
    timeout;
 3. expose vehicle state from existing Autoware topics only after validating
    source age, units, and frames;
-4. publish J6M requests to a private /j6m/vehicle_cmd topic;
+4. receive J6M requests into a command state, not directly into `/vehicle_cmd`;
 5. arbitrate with legacy autonomy and become the unique writer into
-   /vehicle_cmd;
+   `/vehicle_cmd`;
 6. translate speed, steering, gear, mode, enable and emergency only after
-   vehicle mapping is approved;
+   vehicle mapping is approved; see `docs/autoware_vehicle_mapping.md`;
 7. stop accepting J6M commands and clear output on timeout, E-stop, manual
    mode, invalid sequence, CRC failure, or state fault.
 
@@ -321,9 +351,9 @@ xsugv_interface remains the only intended IVCU driver.
 
 The following remain UNKNOWN and are intentionally not embedded in defaults:
 Autoware PC IP, J6 hardware IP, real gateway port, real wheelbase, steering
-ratio/sign/limit, IVCU watchdog, brake behavior, use of ports 4501/6667,
-vehicle-mode mapping, final gear mapping, command rates, clock synchronization,
-and physical link topology.
+ratio/sign/limit, IVCU watchdog, brake behavior, vehicle-mode mapping, final
+gear mapping, command rates, and physical link topology. Ports 4500, 4501, and
+6667 remain reserved for the legacy path and are never used by CNVG.
 
 ## Hardware Validation Checklist
 
@@ -333,10 +363,11 @@ This checklist is for a future NET-1 review; it was not run in this phase.
   control VLAN/point-to-point wiring.
 - Assign and document new gateway addresses and ports; keep them separate from
   HIL and IVCU endpoints.
-- Confirm peer identity, owner/session policy, clock synchronization, packet
-  capture format, and sequence wrap behavior.
-- Confirm Autoware PC is the unique /vehicle_cmd arbiter and xsugv_interface is
-  the only IVCU owner.
+- Confirm peer identity, explicit owner/session policy, packet capture format,
+  and sequence wrap behavior. Clock sync may aid log correlation but is not a
+  command freshness prerequisite.
+- Confirm the gateway is the unique final `/vehicle_cmd` publisher and
+  xsugv_interface is the only IVCU owner.
 - Establish measured steering/gear/brake semantics and manufacturer-approved
   speed/steering limits.
 - Verify IVCU command watchdog and safe stop on packet loss, adapter crash,

@@ -51,7 +51,11 @@ class AcceptedCommand:
 
 
 class OwnerArbiter:
-    """Mock/future ROS1 arbitration rules; no real /vehicle_cmd publisher."""
+    """Offline mock peer acceptance policy; it never publishes /vehicle_cmd.
+
+    Production owner selection and safe transitions are in the standalone C++
+    CommandArbiter, which requires an explicit operator request.
+    """
 
     def __init__(self, command_timeout_sec: float = 0.5) -> None:
         if command_timeout_sec <= 0:
@@ -98,11 +102,10 @@ class OwnerArbiter:
         now_monotonic: float,
         session_valid: bool,
         sequence_valid: bool,
-        timestamp_valid: bool,
         command_valid_for_sec: float | None = None,
     ) -> bool:
-        """Accept a command only when every transport/authority gate is valid."""
-        if not (session_valid and sequence_valid and timestamp_valid):
+        """Accept a command only when the session and sequence gates are valid."""
+        if not (session_valid and sequence_valid):
             return False
         if command_valid_for_sec is None:
             command_valid_for_sec = command.validity_ms / 1000.0

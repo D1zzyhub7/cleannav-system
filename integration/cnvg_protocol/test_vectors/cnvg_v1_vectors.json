@@ -1,0 +1,145 @@
+{
+  "protocol": "CNVG Protocol V1 wire format; V1.1 control freshness semantics",
+  "vectors": [
+    {
+      "name": "hello",
+      "message_type": "HELLO",
+      "sequence": 1,
+      "timestamp_ms": 1700000000123,
+      "message": {
+        "session_id": 72623859790382856,
+        "role": "J6M_GATEWAY",
+        "owner_id": "J6M-GATEWAY"
+      },
+      "expected_hex": "434e564701010000000000010000018bcfe5687b001900000102030405060708014a364d2d47415445574159000000000045f6d6f7"
+    },
+    {
+      "name": "heartbeat",
+      "message_type": "HEARTBEAT",
+      "sequence": 2,
+      "timestamp_ms": 1700000000124,
+      "message": {
+        "session_id": 72623859790382856,
+        "owner_id": "J6M-GATEWAY"
+      },
+      "expected_hex": "434e564701020000000000020000018bcfe5687c0018000001020304050607084a364d2d474154455741590000000000050dd839"
+    },
+    {
+      "name": "control_zero",
+      "message_type": "CONTROL_COMMAND",
+      "sequence": 10,
+      "timestamp_ms": 1700000000125,
+      "message": {
+        "session_id": 1230066625199609624,
+        "owner_id": "J6M-GATEWAY",
+        "enable": false,
+        "emergency_stop": false,
+        "mode": "TWIST_RAW",
+        "gear": "UNSPECIFIED",
+        "validity_ms": 300,
+        "target_speed_mps": 0.0,
+        "target_yaw_rate_rps": 0.0,
+        "target_steering_rad": 0.0
+      },
+      "expected_hex": "434e5647010300000000000a0000018bcfe5687d002a000011121314151617184a364d2d47415445574159000000000000000000012c0000000000000000000000008a03bb14"
+    },
+    {
+      "name": "control_nonzero",
+      "message_type": "CONTROL_COMMAND",
+      "sequence": 11,
+      "timestamp_ms": 1700000000126,
+      "message": {
+        "session_id": 1230066625199609624,
+        "owner_id": "J6M-GATEWAY",
+        "enable": true,
+        "emergency_stop": false,
+        "mode": "TWIST_RAW",
+        "gear": "DRIVE",
+        "validity_ms": 250,
+        "target_speed_mps": 1.25,
+        "target_yaw_rate_rps": -0.5,
+        "target_steering_rad": 0.125
+      },
+      "expected_hex": "434e5647010300000000000b0000018bcfe5687e002a000011121314151617184a364d2d4741544557415900000000000100000400fa3fa00000bf0000003e0000006a4db240"
+    },
+    {
+      "name": "control_estop",
+      "message_type": "CONTROL_COMMAND",
+      "sequence": 12,
+      "timestamp_ms": 1700000000127,
+      "message": {
+        "session_id": 1230066625199609624,
+        "owner_id": "J6M-GATEWAY",
+        "enable": false,
+        "emergency_stop": true,
+        "mode": "TWIST_RAW",
+        "gear": "UNSPECIFIED",
+        "validity_ms": 300,
+        "target_speed_mps": 0.0,
+        "target_yaw_rate_rps": 0.0,
+        "target_steering_rad": 0.0
+      },
+      "expected_hex": "434e5647010300000000000c0000018bcfe5687f002a000011121314151617184a364d2d47415445574159000000000000010000012c000000000000000000000000135eccfd"
+    },
+    {
+      "name": "vehicle_state",
+      "message_type": "VEHICLE_STATE",
+      "sequence": 13,
+      "timestamp_ms": 1700000000128,
+      "message": {
+        "session_id": 2387509390608836392,
+        "owner_id": "MOCK-AUTOWARE",
+        "speed_mps": 1.5,
+        "steering_rad": 0.25,
+        "gear": "DRIVE",
+        "vehicle_mode": "AUTONOMOUS",
+        "emergency": false,
+        "gateway_alive": true,
+        "driver_alive": true,
+        "fault_code": 0
+      },
+      "expected_hex": "434e5647010400000000000d0000018bcfe568800029000021222324252627284d4f434b2d4155544f574152450000003fc000003e8000000402000101000000002d9d3f62"
+    },
+    {
+      "name": "gateway_status",
+      "message_type": "GATEWAY_STATUS",
+      "sequence": 14,
+      "timestamp_ms": 1700000000129,
+      "message": {
+        "session_id": 72623859790382856,
+        "state": "ACTIVE",
+        "last_rx_age_ms": 10,
+        "last_tx_age_ms": 20,
+        "rx_sequence": 30,
+        "tx_sequence": 40,
+        "dropped_packets": 1,
+        "malformed_packets": 2,
+        "stale_packets": 3,
+        "out_of_order_packets": 4
+      },
+      "expected_hex": "434e5647010500000000000e0000018bcfe56881002900000102030405060708020000000a000000140000001e000000280000000100000002000000030000000475aab566"
+    }
+  ],
+  "malformed_vectors": [
+    {
+      "name": "bad_crc",
+      "expected_hex": "434e5647010300000000000b0000018bcfe5687e002a000011121314151617184a364d2d4741544557415900000000000100000400fa3fa00000bf0000003e0000006a4db241",
+      "reject_reason_contains": "CRC"
+    },
+    {
+      "name": "bad_magic",
+      "expected_hex": "584e5647010300000000000b0000018bcfe5687e002a000011121314151617184a364d2d4741544557415900000000000100000400fa3fa00000bf0000003e000000d715e32c",
+      "reject_reason_contains": "magic"
+    },
+    {
+      "name": "bad_length",
+      "expected_hex": "434e5647010300000000000b0000018bcfe5687e002b000011121314151617184a364d2d4741544557415900000000000100000400fa3fa00000bf0000003e000000c9db9a0c",
+      "reject_reason_contains": "length"
+    },
+    {
+      "name": "bad_version",
+      "expected_hex": "434e5647020300000000000b0000018bcfe5687e002a000011121314151617184a364d2d4741544557415900000000000100000400fa3fa00000bf0000003e0000006b109491",
+      "reject_reason_contains": "version"
+    }
+  ]
+}

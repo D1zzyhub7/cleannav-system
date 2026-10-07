@@ -30,7 +30,6 @@ from .protocol import (
     VehicleState,
     decode_message,
     encode_message,
-    timestamp_is_fresh,
     unix_time_ms,
 )
 from .gateway_core import SequenceDisposition, SequenceWindow
@@ -94,9 +93,6 @@ class J6MVehicleGatewayNode(Node):
         self._safe_burst_ms = int(self.declare_parameter(
             'safe_burst_ms', 300
         ).value)
-        self._max_future_skew_ms = int(self.declare_parameter(
-            'max_future_skew_ms', 200
-        ).value)
         self._control_period_ms = int(self.declare_parameter(
             'control_period_ms', 50
         ).value)
@@ -138,7 +134,7 @@ class J6MVehicleGatewayNode(Node):
         except ipaddress.AddressValueError as exc:
             raise ValueError('V1 currently requires IPv4 addresses') from exc
 
-        self._session_id = secrets.randbits(64) or 1
+        self._session_id = secrets.randbits(64)
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._udp.bind((self._bind_ip, self._bind_port))
@@ -147,6 +143,7 @@ class J6MVehicleGatewayNode(Node):
         self._sequences = {message_type: 0 for message_type in MessageType}
         self._rx_windows: dict[MessageType, SequenceWindow] = {}
         self._peer_session_id: int | None = None
+        self._retired_peer_sessions: set[int] = set()
         self._peer_owner_id: str | None = None
         self._peer_role: PeerRole | None = None
         self._peer_hello_rx: float | None = None
@@ -345,21 +342,19 @@ class J6MVehicleGatewayNode(Node):
             except ProtocolError:
                 self._counters['malformed_packets'] += 1
                 continue
-            self._handle_packet(packet, message, now)
+            self._handle_packet(packet, message, time.monotonic())
 
     def _handle_packet(self, packet, message, now: float) -> None:
         if packet.message_type is MessageType.HELLO:
             if not isinstance(message, Hello) or message.role is not PeerRole.AUTOWARE_MOCK:
                 self._counters['malformed_packets'] += 1
                 return
-            if not timestamp_is_fresh(
-                packet.timestamp_ms,
-                max(self._peer_timeout_ms * 3, 1500),
-                max_future_skew_ms=self._max_future_skew_ms,
-            ):
-                self._counters['stale_packets'] += 1
-                return
             if message.session_id != self._peer_session_id:
+                if message.session_id in self._retired_peer_sessions:
+                    self._counters['dropped_packets'] += 1
+                    return
+                if self._peer_session_id is not None:
+                    self._retired_peer_sessions.add(self._peer_session_id)
                 self._peer_session_id = message.session_id
                 self._peer_owner_id = message.owner_id
                 self._peer_role = message.role
@@ -377,13 +372,6 @@ class J6MVehicleGatewayNode(Node):
             if not isinstance(message, Heartbeat) or not self._valid_peer_session(message):
                 self._counters['dropped_packets'] += 1
                 return
-            if not timestamp_is_fresh(
-                packet.timestamp_ms,
-                max(self._peer_timeout_ms * 3, 1500),
-                max_future_skew_ms=self._max_future_skew_ms,
-            ):
-                self._counters['stale_packets'] += 1
-                return
             if not self._sequence_accept(MessageType.HEARTBEAT, packet.sequence):
                 return
             self._peer_heartbeat_rx = now
@@ -393,13 +381,6 @@ class J6MVehicleGatewayNode(Node):
         if packet.message_type is MessageType.VEHICLE_STATE:
             if not isinstance(message, VehicleState) or not self._valid_peer_session(message):
                 self._counters['dropped_packets'] += 1
-                return
-            if not timestamp_is_fresh(
-                packet.timestamp_ms,
-                self._state_timeout_ms,
-                max_future_skew_ms=self._max_future_skew_ms,
-            ):
-                self._counters['stale_packets'] += 1
                 return
             if not self._sequence_accept(MessageType.VEHICLE_STATE, packet.sequence):
                 return
@@ -416,13 +397,6 @@ class J6MVehicleGatewayNode(Node):
                 or message.session_id != self._peer_session_id
             ):
                 self._counters['dropped_packets'] += 1
-                return
-            if not timestamp_is_fresh(
-                packet.timestamp_ms,
-                self._state_timeout_ms,
-                max_future_skew_ms=self._max_future_skew_ms,
-            ):
-                self._counters['stale_packets'] += 1
                 return
             if not self._sequence_accept(MessageType.GATEWAY_STATUS, packet.sequence):
                 return

@@ -311,7 +311,7 @@ def test_offline_mode_rejects_non_loopback_configuration():
 
 
 
-def test_stale_mock_vehicle_state_is_rejected():
+def test_sender_wall_clock_skew_does_not_invalidate_fresh_state():
     rclpy.init()
     j6_port = _free_loopback_port()
     mock_port = _free_loopback_port()
@@ -323,10 +323,10 @@ def test_stale_mock_vehicle_state_is_rejected():
         bind_port=mock_port,
         peer_ip='127.0.0.1',
         peer_port=j6_port,
-        faults=MockFaults(stale=True),
+        faults=MockFaults(timestamp_offset_ms=-86_400_000),
     )
     gateway = _gateway_node(j6_port, mock_port)
-    harness = rclpy.create_node('vehicle_gateway_stale_state_harness')
+    harness = rclpy.create_node('vehicle_gateway_skewed_clock_harness')
     received_speed: list[float] = []
     harness.create_subscription(
         Float64,
@@ -340,11 +340,11 @@ def test_stale_mock_vehicle_state_is_rejected():
     try:
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
-            if gateway._counters['stale_packets'] > 0:
+            if gateway._peer_state is not None and received_speed:
                 break
             time.sleep(0.02)
-        assert gateway._counters['stale_packets'] > 0
-        assert gateway._peer_state is None
-        assert received_speed == []
+        assert gateway._peer_state is not None
+        assert gateway._counters['stale_packets'] == 0
+        assert received_speed
     finally:
         _stop_stack(executor, thread, mock, nodes)
