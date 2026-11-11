@@ -1,0 +1,37 @@
+# Production configuration template. UNSET values intentionally fail startup.
+network:
+  local_ip: UNSET
+  local_port: UNSET
+  peer_ip: UNSET
+  peer_port: UNSET
+  expected_peer_role: J6M_GATEWAY
+  required_capabilities: 7
+owner_id: AUTOWARE-PC
+expected_peer_owner_id: J6M-GATEWAY
+topics:
+  legacy_input: /vehicle_cmd_legacy
+  vehicle_velocity: /vehicle_velocity
+  can_info: /can_info
+  driving_mode_viz: /driving_mode_viz
+  vehicle_cmd_output: /vehicle_cmd
+vehicle:
+  steering_sign: UNSET
+  steering_ratio: UNSET
+  steering_limit_rad: UNSET
+gear_map:
+  park: UNSET
+  reverse: UNSET
+  neutral: UNSET
+  drive: UNSET
+  low: UNSET
+state:
+  vehicle_velocity_type: UNSET
+  steering_feedback_unit: UNCONFIRMED
+driver_health_mode: inferred_from_state_freshness
+driver_health_topic: UNSET
+safety:
+  legacy_command_timeout_ms: UNSET
+  j6m_command_timeout_ms: UNSET
+  state_timeout_ms: UNSET
+  transition_dwell_ms: UNSET
+  driver_health_timeout_ms: UNSET

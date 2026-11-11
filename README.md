@@ -305,16 +305,17 @@ Python/C++14 golden vectors, a ROS-independent command arbiter, and a
 loopback-only replay harness live under `integration/cnvg_protocol/` and
 `tools/cnvg_replay.py`.
 
-Status: **NET-OFFLINE-V2 PASS / NOT HARDWARE VERIFIED**. Full ROS2 validation
+Status: **NET-OFFLINE-V3 PASS / NOT HARDWARE VERIFIED**. Full ROS2 validation
 passed: `colcon build` built 9 packages; `colcon test-result --verbose` reported
-805 tests, 0 errors, 0 failures, 1 skipped. Python/C++14 protocol
-interoperability passed. The prepared ROS1 package skeleton is
-`integration/legacy_autoware_gateway_ros1/`; it is **NOT BUILT AGAINST TARGET
-AUTOWARE** because the ROS1 distribution and target message set are unknown. Its
-source is intentionally inert and does not publish `/vehicle_cmd`. No J6M,
-Autoware PC, vehicle, or IVCU network was used; the old Autoware repository was
-inspected read-only. Vehicle mapping evidence and hardware unknowns are listed
-in `docs/autoware_vehicle_mapping.md`.
+807 tests, 0 errors, 0 failures, 1 skipped. Python/C++14 protocol
+interoperability and the ROS-independent C++14 production core passed. The
+ROS1 adapter source is in `integration/legacy_autoware_gateway_ros1/`; it is
+**SOURCE COMPLETE / NOT BUILT AGAINST TARGET AUTOWARE** because the ROS1
+distribution and target message set are unknown. No J6M, Autoware PC, vehicle,
+or IVCU network was used; the old Autoware repository was inspected read-only.
+Vehicle mapping evidence and hardware unknowns are listed in
+`docs/autoware_vehicle_mapping.md`; the NET-1 audit and bring-up sequence are in
+`tools/net1_runtime_audit.sh` and `docs/net1_hardware_bringup.md`.
 
 ## 9. J6M VLM / Shadow Semantic Observer
 

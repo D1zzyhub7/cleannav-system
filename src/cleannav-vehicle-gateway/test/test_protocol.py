@@ -8,6 +8,7 @@ import pytest
 from cleannav_vehicle_gateway.protocol import (
     HEADER,
     ControlCommand,
+    REQUIRED_CAPABILITIES,
     ControlMode,
     GatewayState,
     GatewayStatus,
@@ -19,6 +20,7 @@ from cleannav_vehicle_gateway.protocol import (
     ProtocolError,
     VehicleMode,
     VehicleState,
+    capabilities_compatible,
     decode_message,
     decode_packet,
     encode_message,
@@ -154,3 +156,25 @@ def test_v1_payload_has_no_c_struct_padding_assumption():
 
     assert len(datagram) == HEADER.size + struct.calcsize('!Q16sBBBbHfff') + 4
 
+
+
+def test_v11_hello_capability_negotiation_fails_closed():
+    compatible = Hello(42, PeerRole.AUTOWARE_PC, 'AUTOWARE-PC')
+    packet, decoded = decode_message(encode_message(compatible, 1, timestamp_ms=1))
+    assert packet.flags == REQUIRED_CAPABILITIES
+    assert capabilities_compatible(decoded.capabilities)
+    assert capabilities_compatible(REQUIRED_CAPABILITIES)
+    assert not capabilities_compatible(REQUIRED_CAPABILITIES & ~1)
+    assert not capabilities_compatible(REQUIRED_CAPABILITIES | (1 << 15))
+
+    old_hello = encode_message(
+        Hello(42, PeerRole.AUTOWARE_PC, 'AUTOWARE-PC', capabilities=0),
+        2, timestamp_ms=2,
+    )
+    _, old_message = decode_message(old_hello)
+    assert not capabilities_compatible(old_message.capabilities)
+
+
+def test_only_hello_may_advertise_capability_flags():
+    with pytest.raises(ProtocolError, match='only defined for HELLO'):
+        encode_packet(MessageType.HEARTBEAT, 1, b'', timestamp_ms=1, flags=1)

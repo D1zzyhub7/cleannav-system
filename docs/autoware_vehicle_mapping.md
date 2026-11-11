@@ -38,10 +38,11 @@ The intended minimum command mapping is:
 | `enable` | Ask the ROS-independent arbiter for explicit J6M ownership. Do not treat network reachability as authorization and do not overload `VehicleCmd.mode`. |
 | brake | Do not map in this phase. Zero target plus disable is not physical braking. |
 
-The portable conversion helper is in
-`integration/legacy_autoware_gateway_ros1/include/j6m_vehicle_gateway_ros1/autoware_mapping.hpp`.
-It contains only `radians_to_degrees` and a config-table lookup that returns
-false without changing the destination when no gear mapping exists.
+The ROS-independent production mapping core is in
+`integration/cnvg_protocol/src/vehicle_mapping.cpp`; ROS message glue is in
+`integration/legacy_autoware_gateway_ros1/src/vehicle_cmd_mapper.cpp`. Steering
+sign, ratio, and limits are configuration-required, gear mapping is
+configuration-only, and J6M brake/E-stop mapping remains disabled.
 
 ## Feedback evidence and limits
 
@@ -52,7 +53,7 @@ false without changing the destination when no gear mapping exists.
 | `/can_info.driveshift` | `CANInfo.msg:12`; `xsugv_interface.cpp:302-310` | Source shift values map to Parking, Reverse, Drive, or Neutral. | Values and feedback semantics are legacy-specific. |
 | `/can_info.devmode`, `strmode` | `CANInfo.msg:3,15`; `xsugv_interface.cpp:311-312` | Both are set to 1 only when IVCU mode equals 3 (autonomous), otherwise 0. | Do not infer operator authorization from these flags. |
 | `/driving_mode_viz` | `xsugv_interface.cpp:330-335, 438` | Mode labels are `None`, `Joystick`, `Remote`, `Auto`, or `Unknown`. | Mode mapping and transition timing require a running Autoware/vehicle setup. |
-| `/vehicle_velocity` | `xsugv_interface.cpp:326-329, 437` | `linear.x` is wheel speed divided by 3.6; reverse shift negates it. | This is the candidate signed m/s vehicle speed feedback. It is not included in the current gateway's minimum wire state. |
+| `/vehicle_velocity` | `xsugv_interface.cpp:326-329, 437` | `linear.x` is wheel speed divided by 3.6; reverse shift negates it. | Candidate signed m/s feedback. Confirm the installed message type at runtime; adapter config requires `Twist` or `TwistStamped`. |
 | `/imu_raw` | `xsugv_interface.cpp:351-361, 436` | Source scales accelerometer and gyro values by 0.01, forms orientation from scaled roll/pitch/heading, and publishes frame `/imu`. | Not bridged by CNVG. Sensor calibration, frame, and physical units require runtime review. |
 | `/ublox_pose` | `xsugv_interface.cpp:364-377, 440` | Latitude/longitude are scaled by `1e-7`, altitude by `1e-2`; projection plane 19 is used and frame is `/map`. | Not bridged by CNVG. Datum, map alignment, and coordinate validity need runtime review. |
 

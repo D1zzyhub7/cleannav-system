@@ -22,14 +22,26 @@ enum class Gear : std::int8_t {
 enum class VehicleMode : std::uint8_t {
   UNKNOWN = 0, MANUAL = 1, AUTONOMOUS = 2, ESTOP = 3, FAULT = 4
 };
+static const std::uint32_t FAULT_CODE_UNKNOWN = 0xffffffffu;
 enum class GatewayState : std::uint8_t {
   DISCONNECTED = 0, WAITING = 1, ACTIVE = 2, STALE = 3, FAULT = 4, ESTOP = 5
 };
 
 enum class SequenceDisposition { ACCEPT, DUPLICATE, OUT_OF_ORDER };
+static const std::uint16_t CAP_RX_MONOTONIC_VALIDITY = 1u << 0;
+static const std::uint16_t CAP_EXPLICIT_OWNER_ARBITRATION = 1u << 1;
+static const std::uint16_t CAP_V11_SEMANTICS = 1u << 2;
+static const std::uint16_t REQUIRED_CAPABILITIES =
+    CAP_RX_MONOTONIC_VALIDITY | CAP_EXPLICIT_OWNER_ARBITRATION | CAP_V11_SEMANTICS;
+static const std::uint16_t SUPPORTED_CAPABILITIES = REQUIRED_CAPABILITIES;
+inline bool capabilities_compatible(std::uint16_t capabilities) {
+  return (capabilities & REQUIRED_CAPABILITIES) == REQUIRED_CAPABILITIES &&
+         (capabilities & static_cast<std::uint16_t>(~SUPPORTED_CAPABILITIES)) == 0;
+}
 
 struct Message {
   std::uint64_t session_id = 0;
+  std::uint16_t capabilities = REQUIRED_CAPABILITIES;
   std::string owner_id;
   PeerRole role = PeerRole::J6M_GATEWAY;
   bool enable = false;
@@ -55,6 +67,7 @@ struct Packet {
   MessageType type = MessageType::HELLO;
   std::uint32_t sequence = 0;
   std::uint64_t timestamp_ms = 0;
+  std::uint16_t flags = 0;
   Message message;
 };
 
@@ -71,6 +84,7 @@ inline Packet decode(const std::vector<std::uint8_t>& data) {
   return decode(data.data(), data.size());
 }
 std::uint32_t crc32(const std::uint8_t* data, std::size_t size);
+std::uint64_t unix_time_ms();
 std::string to_hex(const std::vector<std::uint8_t>& bytes);
 std::vector<std::uint8_t> from_hex(const std::string& hex);
 

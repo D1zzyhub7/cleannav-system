@@ -1,0 +1,7 @@
+<launch>
+  <arg name="config_file" />
+  <node pkg="j6m_vehicle_gateway_ros1" type="j6m_vehicle_gateway_ros1_node"
+        name="j6m_vehicle_gateway_ros1" output="screen">
+    <rosparam command="load" file="$(arg config_file)" />
+  </node>
+</launch>

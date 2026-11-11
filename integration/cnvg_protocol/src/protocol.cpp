@@ -1,6 +1,7 @@
 #include "cnvg_protocol/protocol.hpp"
 
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -114,6 +115,11 @@ std::vector<std::uint8_t> payload_for(MessageType type, const Message& m) {
 
 }  // namespace
 
+std::uint64_t unix_time_ms() {
+  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
 std::uint32_t crc32(const std::uint8_t* data, std::size_t size) {
   std::uint32_t crc = 0xffffffffu;
   for (std::size_t i = 0; i < size; ++i) {
@@ -129,7 +135,8 @@ std::vector<std::uint8_t> encode(MessageType type, std::uint32_t sequence,
   if (kHeaderSize + payload.size() + kCrcSize > kMaxDatagram) throw ProtocolError("datagram too large");
   Writer w;
   for (int i = 0; i < 4; ++i) w.u8(kMagic[i]);
-  w.u8(kVersion); w.u8(static_cast<std::uint8_t>(type)); w.u16(0);
+  const std::uint16_t flags = type == MessageType::HELLO ? message.capabilities : 0;
+  w.u8(kVersion); w.u8(static_cast<std::uint8_t>(type)); w.u16(flags);
   w.u32(sequence); w.u64(timestamp_ms); w.u16(static_cast<std::uint16_t>(payload.size())); w.u16(0);
   std::vector<std::uint8_t> result = w.bytes();
   result.insert(result.end(), payload.begin(), payload.end());
@@ -147,7 +154,9 @@ Packet decode(const std::uint8_t* data, std::size_t size) {
   if (data[4] != kVersion) throw ProtocolError("unsupported protocol version");
   const std::uint8_t raw_type = data[5];
   if (raw_type < 1 || raw_type > 5) throw ProtocolError("unknown message type");
-  if (data[6] != 0 || data[7] != 0 || data[22] != 0 || data[23] != 0) throw ProtocolError("unsupported flags/reserved field");
+  const std::uint16_t flags = static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[6]) << 8) | data[7]);
+  if ((raw_type != static_cast<std::uint8_t>(MessageType::HELLO) && flags != 0) ||
+      data[22] != 0 || data[23] != 0) throw ProtocolError("unsupported flags/reserved field");
   const std::uint16_t payload_len = static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[20]) << 8) | data[21]);
   if (kHeaderSize + payload_len + kCrcSize != size) throw ProtocolError("payload length mismatch");
   const std::uint32_t expected_crc = crc32(data, size - kCrcSize);
@@ -158,6 +167,7 @@ Packet decode(const std::uint8_t* data, std::size_t size) {
 
   Packet packet;
   packet.type = static_cast<MessageType>(raw_type);
+  packet.flags = flags;
   Reader header(data + 8, 16);
   packet.sequence = header.u32(); packet.timestamp_ms = header.u64();
   (void)header.u16(); (void)header.u16();
@@ -168,7 +178,8 @@ Packet decode(const std::uint8_t* data, std::size_t size) {
       if (payload_len != 25) throw ProtocolError("wrong HELLO payload length");
       m.session_id = r.u64(); const std::uint8_t role = r.u8();
       if (!valid_role(role)) throw ProtocolError("invalid peer role");
-      m.role = static_cast<PeerRole>(role); m.owner_id = r.owner(); break;
+      m.role = static_cast<PeerRole>(role); m.owner_id = r.owner();
+      m.capabilities = packet.flags; break;
     }
     case MessageType::HEARTBEAT:
       if (payload_len != 24) throw ProtocolError("wrong HEARTBEAT payload length");

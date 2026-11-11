@@ -3,99 +3,162 @@
 namespace cnvg {
 
 CommandArbiter::CommandArbiter()
-    : owner_(Owner::NONE), requested_owner_(Owner::NONE),
-      transition_target_(Owner::NONE), transitioning_(false) {}
+    : owner_(Owner::NONE),
+      requested_owner_(Owner::NONE),
+      transition_target_(Owner::NONE),
+      state_(ArbiterState::OWNER_NONE),
+      transition_zero_seen_(false),
+      transition_zero_at_ms_(0) {}
 
 void CommandArbiter::request_owner(Owner owner) {
+  if (state_ == ArbiterState::ESTOP_LOCKED ||
+      state_ == ArbiterState::FAULT_LOCKED) {
+    return;
+  }
   requested_owner_ = owner;
-  transitioning_ = false;
   transition_target_ = Owner::NONE;
+  transition_zero_seen_ = false;
 }
 
-void CommandArbiter::clear_request() { request_owner(Owner::NONE); }
-
-ArbiterOutput CommandArbiter::zero_output(bool transition) const {
-  ArbiterOutput out;
-  out.owner = owner_;
-  out.requested_owner = requested_owner_;
-  out.transitioning = transition;
-  out.safe_zero = true;
-  out.enabled = false;
-  return out;
+void CommandArbiter::clear_request() {
+  if (state_ == ArbiterState::ESTOP_LOCKED ||
+      state_ == ArbiterState::FAULT_LOCKED) {
+    return;
+  }
+  requested_owner_ = Owner::NONE;
+  owner_ = Owner::NONE;
+  state_ = ArbiterState::OWNER_NONE;
+  transition_target_ = Owner::NONE;
+  transition_zero_seen_ = false;
 }
 
-ArbiterOutput CommandArbiter::tick(const ArbiterInputs& in) {
-  const bool globally_unsafe = in.estop || in.vehicle_fault ||
-      in.vehicle_mode != VehicleMode::AUTONOMOUS;
-  if (globally_unsafe) {
-    owner_ = Owner::NONE;
+void CommandArbiter::reset_locks(bool operator_reset,
+                                 bool physical_estop_clear_confirmed,
+                                 bool fault_clear_confirmed) {
+  if (!operator_reset) return;
+  if (state_ == ArbiterState::ESTOP_LOCKED &&
+      physical_estop_clear_confirmed) {
+    state_ = ArbiterState::OWNER_NONE;
     requested_owner_ = Owner::NONE;
-    transition_target_ = Owner::NONE;
-    transitioning_ = false;
-    return zero_output(false);
+    owner_ = Owner::NONE;
   }
+  if (state_ == ArbiterState::FAULT_LOCKED && fault_clear_confirmed) {
+    state_ = ArbiterState::OWNER_NONE;
+    requested_owner_ = Owner::NONE;
+    owner_ = Owner::NONE;
+  }
+}
 
-  // Any loss while J6M owns control clears the selection. It cannot silently
-  // fall back to a still-fresh legacy command.
-  if (owner_ == Owner::J6M &&
-      (!in.j6m_session_alive || !in.j6m_command_fresh || !in.j6m_enable)) {
+ArbiterOutput CommandArbiter::zero_output(bool transitioning) const {
+  ArbiterOutput output;
+  output.owner = owner_;
+  output.requested_owner = requested_owner_;
+  output.state = state_;
+  output.transitioning = transitioning;
+  output.safe_zero = true;
+  output.enabled = false;
+  return output;
+}
+
+ArbiterOutput CommandArbiter::tick(const ArbiterInputs& inputs) {
+  if (inputs.estop) {
     owner_ = Owner::NONE;
     requested_owner_ = Owner::NONE;
+    state_ = ArbiterState::ESTOP_LOCKED;
     transition_target_ = Owner::NONE;
-    transitioning_ = false;
     return zero_output(false);
   }
-  if (owner_ == Owner::LEGACY_AUTOWARE && !in.legacy_command_fresh) {
+  if (inputs.vehicle_fault || inputs.multiple_publishers) {
     owner_ = Owner::NONE;
     requested_owner_ = Owner::NONE;
+    state_ = ArbiterState::FAULT_LOCKED;
     transition_target_ = Owner::NONE;
-    transitioning_ = false;
+    return zero_output(false);
+  }
+  if (state_ == ArbiterState::ESTOP_LOCKED ||
+      state_ == ArbiterState::FAULT_LOCKED) {
+    return zero_output(false);
+  }
+  if (inputs.vehicle_mode != VehicleMode::AUTONOMOUS) {
+    clear_request();
+    return zero_output(false);
+  }
+  if ((owner_ == Owner::J6M &&
+       (!inputs.j6m_session_alive || !inputs.j6m_command_fresh ||
+        !inputs.j6m_enable)) ||
+      (owner_ == Owner::LEGACY_AUTOWARE &&
+       !inputs.legacy_command_fresh)) {
+    clear_request();
     return zero_output(false);
   }
 
   const Owner target = requested_owner_;
   if (target == Owner::NONE) {
-    owner_ = Owner::NONE;
-    transition_target_ = Owner::NONE;
-    transitioning_ = false;
+    clear_request();
     return zero_output(false);
   }
   const bool target_ready = target == Owner::J6M
-      ? in.j6m_session_alive && in.j6m_command_fresh && in.j6m_enable
-      : in.legacy_command_fresh;
+      ? inputs.j6m_session_alive && inputs.j6m_command_fresh &&
+            inputs.j6m_enable
+      : inputs.legacy_command_fresh;
   if (!target_ready) {
-    if (owner_ == target || (transitioning_ && transition_target_ == target)) {
+    const ArbiterState requested_transition = target == Owner::J6M
+        ? ArbiterState::TRANSITION_TO_J6M
+        : ArbiterState::TRANSITION_TO_LEGACY;
+    if (owner_ != Owner::NONE && owner_ != target) {
+      // An explicit switch relinquishes the current owner first. If the new
+      // source is not ready, output remains zero and state reports NONE.
       owner_ = Owner::NONE;
-      requested_owner_ = Owner::NONE;
+      state_ = ArbiterState::OWNER_NONE;
       transition_target_ = Owner::NONE;
-      transitioning_ = false;
+      transition_zero_seen_ = false;
+    } else if (state_ == requested_transition &&
+               transition_target_ == target) {
+      clear_request();
     }
     return zero_output(false);
   }
 
-  if (owner_ == target && !transitioning_) {
-    ArbiterOutput out;
-    out.owner = owner_;
-    out.requested_owner = requested_owner_;
-    out.transitioning = false;
-    out.safe_zero = false;
-    out.enabled = true;
-    return out;
+  if (owner_ == target &&
+      ((target == Owner::J6M && state_ == ArbiterState::OWNER_J6M) ||
+       (target == Owner::LEGACY_AUTOWARE &&
+        state_ == ArbiterState::OWNER_LEGACY))) {
+    ArbiterOutput output;
+    output.owner = owner_;
+    output.requested_owner = requested_owner_;
+    output.state = state_;
+    output.safe_zero = false;
+    output.enabled = true;
+    return output;
   }
 
-  if (!transitioning_ || transition_target_ != target) {
+  const ArbiterState transition_state = target == Owner::J6M
+      ? ArbiterState::TRANSITION_TO_J6M
+      : ArbiterState::TRANSITION_TO_LEGACY;
+  if (transition_target_ != target || state_ != transition_state) {
     owner_ = Owner::NONE;
     transition_target_ = target;
-    transitioning_ = true;
+    state_ = transition_state;
+    transition_zero_seen_ = false;
+  }
+  if (!inputs.safe_zero_confirmed) {
+    transition_zero_seen_ = false;
     return zero_output(true);
   }
-  if (!in.safe_zero_confirmed) return zero_output(true);
+  if (!transition_zero_seen_) {
+    transition_zero_seen_ = true;
+    transition_zero_at_ms_ = inputs.monotonic_ms;
+  }
+  if (inputs.monotonic_ms - transition_zero_at_ms_ <
+      inputs.transition_dwell_ms) {
+    return zero_output(true);
+  }
 
   owner_ = target;
-  transitioning_ = false;
+  state_ = target == Owner::J6M ? ArbiterState::OWNER_J6M
+                                : ArbiterState::OWNER_LEGACY;
   transition_target_ = Owner::NONE;
-  // The transition completion tick remains zero. Enable begins on the next
-  // tick, after the downstream publisher has observed the owner change.
+  transition_zero_seen_ = false;
   return zero_output(false);
 }
 

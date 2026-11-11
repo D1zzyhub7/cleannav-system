@@ -113,6 +113,35 @@ int main() {
     a.request_owner(Owner::LEGACY_AUTOWARE); in = base();
     complete_transition(a, in, Owner::LEGACY_AUTOWARE);
   }
+  {
+    CommandArbiter a; ArbiterInputs in = base(); a.request_owner(Owner::LEGACY_AUTOWARE);
+    complete_transition(a, in, Owner::LEGACY_AUTOWARE);
+    in = base(); in.legacy_command_fresh = false;
+    const ArbiterOutput out = a.tick(in);
+    assert(out.owner == Owner::NONE && out.safe_zero && !out.enabled);
+    // A live J6M peer cannot inherit a stale legacy owner's request.
+    in = base(); assert(a.tick(in).owner == Owner::NONE);
+  }
+  {
+    CommandArbiter a; ArbiterInputs in = base(); a.request_owner(Owner::J6M);
+    complete_transition(a, in, Owner::J6M);
+    in = base(); in.multiple_publishers = true;
+    assert(a.tick(in).state == cnvg::ArbiterState::FAULT_LOCKED);
+    in.multiple_publishers = false;
+    assert(a.tick(in).state == cnvg::ArbiterState::FAULT_LOCKED);
+  }
+  {
+    CommandArbiter a; ArbiterInputs in = base();
+    a.request_owner(Owner::LEGACY_AUTOWARE);
+    complete_transition(a, in, Owner::LEGACY_AUTOWARE);
+    a.request_owner(Owner::J6M);
+    in = base(); in.j6m_session_alive = false;
+    const ArbiterOutput out = a.tick(in);
+    assert(out.owner == Owner::NONE && out.safe_zero && !out.enabled);
+    assert(a.requested_owner() == Owner::J6M);
+    // The current owner is relinquished while J6M is not ready; there is no
+    // silent Legacy output or automatic fallback.
+  }
   std::cout << "arbiter, sequence, and mapping cases passed\n";
   return 0;
 }

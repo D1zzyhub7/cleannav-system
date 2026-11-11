@@ -9,9 +9,10 @@
       "message": {
         "session_id": 72623859790382856,
         "role": "J6M_GATEWAY",
-        "owner_id": "J6M-GATEWAY"
+        "owner_id": "J6M-GATEWAY",
+        "capabilities": 7
       },
-      "expected_hex": "434e564701010000000000010000018bcfe5687b001900000102030405060708014a364d2d47415445574159000000000045f6d6f7"
+      "expected_hex": "434e564701010007000000010000018bcfe5687b001900000102030405060708014a364d2d47415445574159000000000094b844ff"
     },
     {
       "name": "heartbeat",

@@ -1,6 +1,6 @@
 # CleanNav × Legacy Autoware vehicle gateway V1.1
 
-Status: **NET-OFFLINE-V1 CHECKPOINTED; NET-OFFLINE-V2 PASS**. The CNVG
+Status: **NET-OFFLINE-V1/V2 CHECKPOINTED; NET-OFFLINE-V3 PASS; NOT HARDWARE VERIFIED**. The CNVG
 Protocol V1 wire layout uses V1.1 freshness semantics. Offline verification:
 `colcon build` passed (9 ROS2 packages), and `colcon test-result --verbose`
 reported 805 tests, 0 errors, 0 failures, 1 skipped. Python/C++14 interoperability
@@ -8,8 +8,15 @@ passed. This is **NOT HARDWARE VERIFIED**.
 
 No code in this package sends the legacy IVCU protocol. It does not use UDP
 4500, 4501, or 6667, and it does not publish ROS 1 /vehicle_cmd. The future
-ROS1 source skeleton is under `integration/legacy_autoware_gateway_ros1/`; it is
-**NOT BUILT AGAINST TARGET AUTOWARE**.
+ROS1 production source is under `integration/legacy_autoware_gateway_ros1/`; it is
+**SOURCE COMPLETE / NOT BUILT AGAINST TARGET AUTOWARE**.
+
+### V1.1 peer capability negotiation
+
+The wire version byte remains `1` and the fixed header/payload sizes do not change. HELLO alone uses the existing 16-bit header flags field as a capability mask: bit 0 is receiver-local monotonic validity, bit 1 is explicit owner arbitration, and bit 2 is V1.1 semantics. V1.1 peers must advertise all three bits (`0x0007`). Any missing bit or any unknown advertised bit is incompatible and cannot establish an active session. Flags on non-HELLO messages remain zero.
+
+A legacy V1 peer with HELLO flags zero can be parsed for diagnosis but is never accepted for control. A strict old V1 parser will reject the V1.1 HELLO flags. Both cases fail closed without changing the 24-byte header or 25-byte HELLO payload. CRC32 remains error detection, not authentication; peer IP/port, role, owner ID, session, capability mask, and per-message sequence are checked separately.
+
 
 ## Architecture
 
@@ -49,7 +56,7 @@ The fixed header is 24 bytes:
 | 0 | 4 | magic | ASCII CNVG |
 | 4 | 1 | version | 1 |
 | 5 | 1 | message_type | Message Types below |
-| 6 | 2 | flags | 0; other values rejected |
+| 6 | 2 | flags | HELLO V1.1 capability mask `0x0007`; zero elsewhere |
 | 8 | 4 | sequence | uint32 per sender and message type |
 | 12 | 8 | timestamp_ms | Unix epoch milliseconds |
 | 20 | 2 | payload_length | Exact number of payload bytes |
@@ -60,13 +67,15 @@ The fixed header is 24 bytes:
 CRC is zlib.crc32 over bytes 0 through the last payload byte. The trailing CRC
 field is excluded from the CRC input. Empty payloads are legal at the framing
 layer but are rejected for every defined message type. Maximum datagram size is
-512 bytes. Wrong magic, version, type, flags, length, payload enum, or CRC is
-rejected before it can update command/state.
+512 bytes. Wrong magic, version, type, non-HELLO flags, length, payload enum, or CRC is
+rejected before it can update command/state. HELLO capability incompatibility
+is rejected by session validation before session/heartbeat/command/state updates.
 
 The header timestamp is Unix epoch milliseconds for packet-capture correlation
 and diagnostics only. The wire version byte remains 1; the semantic revision
 is CNVG Protocol V1.1. Control freshness does not compare sender and receiver
-wall clocks. The command receiver timestamps each accepted datagram on its own
+wall clocks. The header timestamp remains Unix epoch milliseconds for logs;
+all expirations use receiver-local monotonic clocks. The command receiver timestamps each accepted datagram on its own
 monotonic clock and expires that command after `command_validity_ms`. Session,
 sequence, and heartbeat age are independent gates. Clock synchronization may
 improve log correlation, but is not a control-safety requirement. V1.0 peers
@@ -248,7 +257,7 @@ selection and transition requirements for the future ROS1 adapter.
 - The mock peer accepts J6M commands only with valid session, live heartbeat,
   fresh sequence, receiver-local command validity, enable=true, no E-stop, and
   autonomous vehicle mode. Unix timestamp is diagnostic-only.
-- The future production core selects J6M only after `request_owner(J6M)` and a
+- The production core selects J6M only after `request_owner(J6M)` and a
   complete safe-zero transition; packet arrival never selects control owner.
 - OWNER_LEGACY_AUTOWARE cannot be stolen by an arriving J6M packet.
 - MANUAL, ESTOP, fault, bad driver/gateway health, or network/command timeout
@@ -259,13 +268,21 @@ selection and transition requirements for the future ROS1 adapter.
   and a complete safe-zero transition. Disconnect alone never promotes another
   publisher.
 
-The C++14 ROS-independent arbiter is in `integration/cnvg_protocol/`. It clears
-J6M ownership and its requested owner on timeout, E-stop, manual mode, or fault.
-The ROS2 node's sender and mock receiver capture monotonic receive time per UDP
-datagram; Unix timestamps never gate command or state freshness.
-The ROS1 skeleton has one final `/vehicle_cmd` publisher declaration. A future
-legacy launch must route `twist_gate` to `/vehicle_cmd_legacy`; this phase does
-not change old Autoware launch/source and does not publish ROS1 vehicle commands.
+CNVG V1.1 is a freeze candidate after Python/C++ golden-vector interop,
+capability, session, sequence, monotonic freshness, and peer-source tests.
+Hardware interop remains unverified. The C++14 ROS-independent core is in
+`integration/cnvg_protocol/`: codec, HELLO
+capability negotiation, source/session/sequence validation, local-monotonic
+freshness, production config checks, owner arbiter, UDP transport, and mapping.
+It clears ownership on timeout, E-stop, mode loss, or fault. Unix timestamps
+never gate command freshness.
+
+The ROS1 adapter source is now in
+`integration/legacy_autoware_gateway_ros1/`; it is source-complete but has not
+been built against the target ROS1/Autoware. It has one final `/vehicle_cmd`
+publisher and checks ROS master publisher identities, failing closed on an
+unknown graph or extra writer. The include template remaps legacy `twist_gate`
+output to `/vehicle_cmd_legacy`; no old Autoware source is changed.
 
 ## Fail-safe Behavior
 
@@ -317,35 +334,33 @@ Outputs:
 
 No network command maps to /vehicle_cmd in this package.
 
-## Future ROS1 Adapter
+## ROS1 Production Adapter Source
 
-Proposed package/node name: `j6m_vehicle_gateway_ros1`. Source skeleton:
-`integration/legacy_autoware_gateway_ros1/`. It is **NOT BUILT AGAINST TARGET
-AUTOWARE** because the ROS1 distribution and target message package are unknown.
-Its intended architecture has one final `/vehicle_cmd` publisher; legacy
-`twist_gate` input must first be redirected to `/vehicle_cmd_legacy`.
+`integration/legacy_autoware_gateway_ros1/` contains the source-complete ROS1
+adapter layout and production configuration template. It has not been built
+against the target ROS1 distribution or Autoware message revision. The launch
+requires an explicit config file and fails closed on `UNSET` endpoints,
+steering settings, owner identity, capability mask, or timeout values.
 
-The future adapter should:
+The input path is UDP -> CNVG codec -> expected peer IP/port, role, owner,
+capabilities, session and sequence validation -> explicit owner arbiter ->
+configured VehicleCmd mapper -> sole `/vehicle_cmd` publisher. ROS feedback
+from parameterized `/vehicle_velocity`, `/can_info`, and `/driving_mode_viz`
+feeds the state mapper and returns `VEHICLE_STATE` by UDP. Legacy command
+freshness uses receiver-local monotonic time. Owner changes pass through
+zero-target dwell; disconnect goes to NONE.
 
-1. bind one reviewed, parameterized new gateway endpoint;
-2. validate V1 packets and enforce an independent 450 ms offline-default RX
-   timeout;
-3. expose vehicle state from existing Autoware topics only after validating
-   source age, units, and frames;
-4. receive J6M requests into a command state, not directly into `/vehicle_cmd`;
-5. arbitrate with legacy autonomy and become the unique writer into
-   `/vehicle_cmd`;
-6. translate speed, steering, gear, mode, enable and emergency only after
-   vehicle mapping is approved; see `docs/autoware_vehicle_mapping.md`;
-7. stop accepting J6M commands and clear output on timeout, E-stop, manual
-   mode, invalid sequence, CRC failure, or state fault.
+Speed maps directly in m/s. Steering uses configured sign, ratio, and radians
+limit before conversion to degrees. Gear mapping is config-only; an unmapped
+non-unspecified gear is rejected. No J6M brake mapping or physical E-stop
+claim is made. State steering feedback defaults to `UNCONFIRMED`; unit
+conversion does not validate closed-loop steering. The ROS master check reports
+publisher identities and refuses J6M ownership when another `/vehicle_cmd`
+writer exists or graph state cannot be read.
 
-Legacy source evidence suggests /vehicle_cmd.ctrl_cmd.linear_velocity is m/s
-and its steering_angle consumer expects degrees before multiplying by 100 for
-the legacy 0.01-degree IVCU value. The protocol steering value is radians.
-Conversion, sign, limits, brake behavior, gear mapping, source arbitration,
-and actual topic graph need Autoware-runtime verification. The old
-xsugv_interface remains the only intended IVCU driver.
+See [the adapter README](../integration/legacy_autoware_gateway_ros1/README.md),
+[the mapping evidence](autoware_vehicle_mapping.md), and
+[the NET-1 bring-up checklist](net1_hardware_bringup.md).
 
 ## Runtime Unknowns
 

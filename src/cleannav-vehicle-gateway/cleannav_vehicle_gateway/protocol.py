@@ -19,6 +19,12 @@ import zlib
 MAGIC = b'CNVG'
 VERSION = 1
 SEMANTIC_REVISION = '1.1'
+CAP_RX_MONOTONIC_VALIDITY = 1 << 0
+CAP_EXPLICIT_OWNER_ARBITRATION = 1 << 1
+CAP_V11_SEMANTICS = 1 << 2
+REQUIRED_CAPABILITIES = (CAP_RX_MONOTONIC_VALIDITY |
+                         CAP_EXPLICIT_OWNER_ARBITRATION | CAP_V11_SEMANTICS)
+SUPPORTED_CAPABILITIES = REQUIRED_CAPABILITIES
 MAX_DATAGRAM_BYTES = 512
 MAX_PAYLOAD_BYTES = MAX_DATAGRAM_BYTES - 24 - 4
 
@@ -83,6 +89,7 @@ class Packet:
     sequence: int
     timestamp_ms: int
     payload: bytes
+    flags: int = 0
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,7 @@ class Hello:
     session_id: int
     role: PeerRole
     owner_id: str
+    capabilities: int = REQUIRED_CAPABILITIES
 
 
 @dataclass(frozen=True)
@@ -279,7 +287,7 @@ def decode_payload(packet: Packet) -> object:
         values = payload_struct.unpack(packet.payload)
         if packet.message_type is MessageType.HELLO:
             session_id, role, owner = values
-            return Hello(session_id, PeerRole(role), _owner_string(owner))
+            return Hello(session_id, PeerRole(role), _owner_string(owner), packet.flags)
         if packet.message_type is MessageType.HEARTBEAT:
             session_id, owner = values
             return Heartbeat(session_id, _owner_string(owner))
@@ -329,6 +337,7 @@ def encode_packet(
     payload: bytes,
     *,
     timestamp_ms: int | None = None,
+    flags: int = 0,
 ) -> bytes:
     """Encode one complete datagram with header and IEEE CRC-32."""
     try:
@@ -338,10 +347,14 @@ def encode_packet(
     sequence = _validate_u32(sequence, 'sequence')
     timestamp_ms = unix_time_ms() if timestamp_ms is None else timestamp_ms
     _validate_u64(timestamp_ms, 'timestamp_ms')
+    if not 0 <= flags <= 0xFFFF:
+        raise ProtocolError('flags must be uint16')
+    if message_type is not MessageType.HELLO and flags != 0:
+        raise ProtocolError('flags are only defined for HELLO capabilities')
     if not isinstance(payload, bytes) or len(payload) > MAX_PAYLOAD_BYTES:
         raise ProtocolError('payload must be bytes and fit the V1 datagram limit')
     header = HEADER.pack(
-        MAGIC, VERSION, int(message_type), 0, sequence, timestamp_ms,
+        MAGIC, VERSION, int(message_type), flags, sequence, timestamp_ms,
         len(payload), 0,
     )
     covered = header + payload
@@ -355,8 +368,9 @@ def encode_message(
     timestamp_ms: int | None = None,
 ) -> bytes:
     message_type, payload = encode_payload(message)
+    flags = message.capabilities if isinstance(message, Hello) else 0
     return encode_packet(
-        message_type, sequence, payload, timestamp_ms=timestamp_ms
+        message_type, sequence, payload, timestamp_ms=timestamp_ms, flags=flags
     )
 
 
@@ -376,12 +390,12 @@ def decode_packet(datagram: bytes) -> Packet:
         raise ProtocolError('bad magic')
     if version != VERSION:
         raise ProtocolError(f'unsupported protocol version: {version}')
-    if flags != 0 or reserved != 0:
-        raise ProtocolError('unsupported flags or nonzero reserved field')
     try:
         message_type = MessageType(raw_type)
     except ValueError as exc:
         raise ProtocolError(f'unknown message type: {raw_type}') from exc
+    if reserved != 0 or (message_type is not MessageType.HELLO and flags != 0):
+        raise ProtocolError('unsupported flags or nonzero reserved field')
     expected_size = HEADER.size + payload_len + CRC.size
     if payload_len > MAX_PAYLOAD_BYTES or len(datagram) != expected_size:
         raise ProtocolError('payload length does not match datagram')
@@ -395,12 +409,23 @@ def decode_packet(datagram: bytes) -> Packet:
         sequence=sequence,
         timestamp_ms=timestamp_ms,
         payload=datagram[HEADER.size:-CRC.size],
+        flags=flags,
     )
 
 
 def decode_message(datagram: bytes) -> tuple[Packet, object]:
     packet = decode_packet(datagram)
     return packet, decode_payload(packet)
+
+
+def capabilities_compatible(capabilities: int) -> bool:
+    """Require all V1.1 features and reject every unknown advertised bit."""
+    return (
+        isinstance(capabilities, int)
+        and capabilities >= 0
+        and capabilities & REQUIRED_CAPABILITIES == REQUIRED_CAPABILITIES
+        and capabilities & ~SUPPORTED_CAPABILITIES == 0
+    )
 
 
 def timestamp_is_fresh(

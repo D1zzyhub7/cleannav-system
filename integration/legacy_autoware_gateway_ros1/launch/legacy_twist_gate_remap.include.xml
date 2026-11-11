@@ -1,0 +1,8 @@
+<!-- Include the existing Legacy Autoware launch through this group. -->
+<launch>
+  <arg name="legacy_autoware_launch" />
+  <group>
+    <remap from="/vehicle_cmd" to="/vehicle_cmd_legacy" />
+    <include file="$(arg legacy_autoware_launch)" />
+  </group>
+</launch>

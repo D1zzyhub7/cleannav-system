@@ -29,6 +29,7 @@ from .protocol import (
     VehicleMode,
     VehicleState,
     decode_message,
+    capabilities_compatible,
     encode_message,
     unix_time_ms,
 )
@@ -347,6 +348,9 @@ class J6MVehicleGatewayNode(Node):
     def _handle_packet(self, packet, message, now: float) -> None:
         if packet.message_type is MessageType.HELLO:
             if not isinstance(message, Hello) or message.role is not PeerRole.AUTOWARE_MOCK:
+                self._counters['malformed_packets'] += 1
+                return
+            if not capabilities_compatible(message.capabilities):
                 self._counters['malformed_packets'] += 1
                 return
             if message.session_id != self._peer_session_id:
