@@ -1,0 +1,6 @@
+<launch>
+  <arg name="config_file" />
+  <include file="$(find j6m_vehicle_gateway_ros1)/launch/production_gateway.launch">
+    <arg name="config_file" value="$(arg config_file)" />
+  </include>
+</launch>

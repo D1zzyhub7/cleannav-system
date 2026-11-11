@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>j6m_vehicle_gateway_ros1</name><version>0.2.0</version>
+  <description>Production-source ROS1 adapter for CleanNav and Legacy Autoware; target runtime build required.</description>
+  <maintainer email="1339980053@qq.com">CleanNav maintainers</maintainer><license>Apache-2.0</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend><depend>autoware_msgs</depend><depend>autoware_can_msgs</depend>
+  <depend>geometry_msgs</depend><depend>std_msgs</depend><depend>diagnostic_msgs</depend><depend>std_srvs</depend>
+  <export/>
+</package>
